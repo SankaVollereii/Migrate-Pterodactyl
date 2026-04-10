@@ -1,0 +1,10 @@
+*.sql
+*.tar.gz
+*.zip
+
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+*.swp
