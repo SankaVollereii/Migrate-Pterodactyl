@@ -1,6 +1,6 @@
-# 🦅 Pterodactyl Auto Migration
+# 🦅 Pterodactyl Auto Migration & Tools
 
-> Migrasi Pterodactyl Panel dari VPS Lama ke VPS Baru.
+> Migrasi panel, install fresh, benchmark VPS, pasang thema.
 > Satu script — semua otomatis. **Terima jadi.**
 
 ![Version](https://img.shields.io/badge/version-2.1.0-blue?style=flat-square)
@@ -11,6 +11,7 @@
 
 ## ✨ Fitur
 
+**Migrasi:**
 - ✅ Backup database & file panel otomatis
 - ✅ Auto kirim backup ke VPS Baru via SCP
 - ✅ Auto install semua dependencies
@@ -18,8 +19,16 @@
 - ✅ Restore database + buat ulang user DB
 - ✅ Composer install, clear cache, migrate DB
 - ✅ Hapus file backup (opsi 3)
+
+**Tools:**
+- 🛠️ Install Pterodactyl Panel 
+- 📊 Benchmark & cek spesifikasi VPS
+- 🎨 Pasang thema Pterodactyl
+
+**Lainnya:**
 - ✅ Support **Ubuntu, Debian & CentOS/RHEL**
 - ✅ Password MySQL aman (tidak muncul di `ps`)
+- ✅ Log tersimpan otomatis ke file
 - ✅ Output terminal berwarna & informatif
 
 ---
@@ -93,26 +102,65 @@ certbot --nginx -d namadomain.com
 
 ---
 
-## ⚡ Input yang Dibutuhkan
+## ⚡ Semua Menu
 
-| Langkah | Input |
-|---------|-------|
-| **Backup** (VPS Lama) | IP, Port, User, Pass SSH |
-| **Restore** (VPS Baru) | Password root MySQL |
-| **Hapus Backup** | Konfirmasi y/N |
+| Opsi | Fungsi | Input |
+|------|--------|-------|
+| **[1] Backup** | Backup & kirim ke VPS Baru | IP, Port, User, Pass SSH |
+| **[2] Restore** | Restore & setup di VPS Baru | Password root MySQL |
+| **[3] Cleanup** | Hapus file backup | Konfirmasi y/N |
+| **[4] Install Panel** | Install Pterodactyl fresh | Ikuti wizard |
+| **[5] Cek Spek VPS** | Benchmark CPU, RAM, Disk, Network | Otomatis |
+| **[6] Pasang Thema** | Install thema Pterodactyl | Ikuti wizard |
+| **[7] Cloudflared** | Install & setup Cloudflare Tunnel | Token tunnel |
 
-> Semua selain itu: **otomatis.**
+> Semua dependency: **auto install.**
 
 ---
 
-## 🗑️ Hapus Backup (Opsional)
+## 🛠️ Tools Tambahan
 
-Jalankan di **VPS Lama** setelah restore berhasil:
+### Install Panel Fresh
 
 ```bash
 sudo bash migrate.sh
-# Pilih [3] HAPUS BACKUP
+# Pilih [4] INSTALL PANEL
 ```
+
+Menggunakan [pterodactyl-installer.se](https://pterodactyl-installer.se) — ikuti instruksi di layar.
+
+### Cek Spesifikasi VPS
+
+```bash
+sudo bash migrate.sh
+# Pilih [5] CEK SPEK VPS
+```
+
+Menampilkan info CPU, RAM, Disk, I/O speed, dan network speed.
+
+### Pasang Thema
+
+```bash
+sudo bash migrate.sh
+# Pilih [6] PASANG THEMA
+```
+
+Menggunakan [Thema-Pterodactyl](https://github.com/SankaVollereii/Thema-Pterodactyl) — panel harus sudah terinstall.
+
+### Cloudflare Tunnel
+
+```bash
+sudo bash migrate.sh
+# Pilih [7] CLOUDFLARED
+```
+
+Install cloudflared & setup tunnel otomatis. Bisa paste token langsung atau perintah lengkap seperti:
+
+```
+sudo cloudflared service install eyJhIjo...
+```
+
+Script akan otomatis mengambil tokennya saja.
 
 ---
 

@@ -663,6 +663,180 @@ run_cleanup() {
 }
 
 # ============================================================
+#   OPSI 4: INSTALL PANEL 
+# ============================================================
+run_install_panel() {
+    log_section
+    log_step "Install Pterodactyl Panel (Fresh Install)"
+    log_section
+
+    if [ -d "/var/www/pterodactyl" ]; then
+        log_warn "Folder /var/www/pterodactyl sudah ada!"
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Panel mungkin sudah terinstall. Lanjutkan? [y/N]: ${NC}"
+        read -r CONFIRM
+        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+            log_warn "Dibatalkan."
+            return
+        fi
+    fi
+
+    ensure_pkg "curl" "curl"
+
+    log_info "Menjalankan Pterodactyl Installer..."
+    log_info "Ikuti instruksi di layar untuk menyelesaikan instalasi."
+    echo ""
+
+    bash <(curl -s https://pterodactyl-installer.se)
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  INSTALL PANEL SELESAI!${NC}"
+    echo -e "  Cek panel kamu di browser.${NC}\n"
+    log_section
+}
+
+# ============================================================
+#   OPSI 5: CEK SPESIFIKASI VPS
+# ============================================================
+run_benchmark() {
+    log_section
+    log_step "Benchmark & Cek Spesifikasi VPS"
+    log_section
+
+    ensure_pkg "wget" "wget"
+
+    log_info "Menjalankan bench.sh — ini bisa memakan waktu beberapa menit..."
+    echo ""
+
+    wget -qO- bench.sh | bash
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  BENCHMARK SELESAI!${NC}\n"
+    log_section
+}
+
+# ============================================================
+#   OPSI 6: PASANG THEMA PTERODACTYL
+# ============================================================
+run_install_theme() {
+    log_section
+    log_step "Pasang Thema Pterodactyl"
+    log_section
+
+    if [ ! -d "/var/www/pterodactyl" ]; then
+        log_error "Folder /var/www/pterodactyl tidak ditemukan!"
+        log_warn "Install panel terlebih dahulu sebelum memasang thema."
+        return
+    fi
+
+    ensure_pkg "curl" "curl"
+
+    log_info "Menjalankan installer Thema Pterodactyl..."
+    log_info "Ikuti instruksi di layar untuk menyelesaikan instalasi."
+    echo ""
+
+    bash <(curl -s https://raw.githubusercontent.com/SankaVollereii/Thema-Pterodactyl/main/install.sh)
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  THEMA BERHASIL DIPASANG!${NC}"
+    echo -e "  Refresh browser untuk melihat perubahan.\n"
+    log_section
+}
+
+# ============================================================
+#   OPSI 7: INSTALL CLOUDFLARED TUNNEL
+# ============================================================
+run_install_cloudflared() {
+    log_section
+    log_step "Install Cloudflare Tunnel (cloudflared)"
+    log_section
+
+    if command -v cloudflared &>/dev/null; then
+        log_info "cloudflared sudah terinstall ($(cloudflared --version 2>&1 | head -1))."
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Install ulang? [y/N]: ${NC}"
+        read -r CONFIRM
+        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+            log_warn "Dibatalkan."
+        else
+            log_info "Menginstall ulang cloudflared..."
+            if command -v apt-get &>/dev/null; then
+                curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null 2>&1
+                echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" > /etc/apt/sources.list.d/cloudflared.list
+                apt-get update -qq > /dev/null 2>&1
+                apt-get install -y -qq cloudflared > /dev/null 2>&1
+            elif command -v yum &>/dev/null; then
+                yum install -y -q cloudflared > /dev/null 2>&1 || {
+                    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+                    chmod +x /usr/local/bin/cloudflared
+                }
+            fi
+            log_info "cloudflared berhasil diinstall ulang."
+        fi
+    else
+        log_info "Menginstall cloudflared..."
+        ensure_pkg "curl" "curl"
+
+        if command -v apt-get &>/dev/null; then
+            curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null 2>&1
+            echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" > /etc/apt/sources.list.d/cloudflared.list
+            apt-get update -qq > /dev/null 2>&1
+            apt-get install -y -qq cloudflared > /dev/null 2>&1
+        elif command -v yum &>/dev/null; then
+            yum install -y -q cloudflared > /dev/null 2>&1 || {
+                curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+                chmod +x /usr/local/bin/cloudflared
+            }
+        else
+            curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+            chmod +x /usr/local/bin/cloudflared
+        fi
+
+        if command -v cloudflared &>/dev/null; then
+            log_info "cloudflared terinstall ($(cloudflared --version 2>&1 | head -1))."
+        else
+            log_error "Gagal menginstall cloudflared!"
+            return
+        fi
+    fi
+
+    echo ""
+    log_step "Setup Cloudflare Tunnel..."
+    echo -e "  ${YELLOW}[?]${NC}${BOLD} Masukkan token Cloudflare Tunnel:${NC}"
+    echo -e "  ${CYAN}    Bisa paste token langsung atau perintah lengkap seperti:${NC}"
+    echo -e "  ${CYAN}    sudo cloudflared service install eyJhIjo...${NC}"
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Token: ${NC}"
+    read -r CF_INPUT
+
+    if [ -z "$CF_INPUT" ]; then
+        log_warn "Token kosong, skip setup tunnel."
+        return
+    fi
+
+    local CF_TOKEN
+    CF_TOKEN=$(echo "$CF_INPUT" | grep -oP 'eyJ[A-Za-z0-9_-]+' | head -1)
+
+    if [ -z "$CF_TOKEN" ]; then
+        log_error "Token tidak valid! Pastikan token dimulai dengan 'eyJ...'."
+        return
+    fi
+
+    log_info "Token terdeteksi: ${CF_TOKEN:0:20}..."
+
+    cloudflared service install "$CF_TOKEN" 2>/dev/null && {
+        systemctl enable cloudflared --quiet 2>/dev/null
+        systemctl start cloudflared 2>/dev/null
+        log_info "Cloudflare Tunnel berhasil disetup & dijalankan."
+    } || {
+        log_warn "cloudflared service mungkin sudah ada, mencoba restart..."
+        systemctl restart cloudflared 2>/dev/null
+    }
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  CLOUDFLARED TUNNEL AKTIF!${NC}"
+    echo -e "  Cek status: ${CYAN}systemctl status cloudflared${NC}\n"
+    log_section
+}
+
+# ============================================================
 #   MAIN MENU
 # ============================================================
 main() {
@@ -670,17 +844,29 @@ main() {
     check_root
 
     echo -e "  ${BOLD}Pilih mode yang sesuai dengan VPS kamu:${NC}\n"
-    echo -e "  ${GREEN}[1]${NC} 📤  ${BOLD}BACKUP${NC}  — Jalankan di VPS LAMA (auto kirim ke VPS Baru)"
-    echo -e "  ${GREEN}[2]${NC} 📥  ${BOLD}RESTORE${NC} — Jalankan di VPS BARU (auto install & setup semua)"
-    echo -e "  ${RED}[3]${NC} 🗑️   ${BOLD}HAPUS BACKUP${NC} — Bersihkan file backup di VPS LAMA"
+    echo -e "  ${CYAN}━━━━━━━━━━━━ MIGRASI ━━━━━━━━━━━━${NC}"
+    echo -e "  ${GREEN}[1]${NC} 📤  ${BOLD}BACKUP${NC}   — Jalankan di VPS LAMA (auto kirim ke VPS Baru)"
+    echo -e "  ${GREEN}[2]${NC} 📥  ${BOLD}RESTORE${NC}  — Jalankan di VPS BARU (auto install & setup semua)"
+    echo -e "  ${RED}[3]${NC} 🗑️   ${BOLD}CLEANUP${NC}  — Bersihkan file backup di VPS"
+    echo ""
+    echo -e "  ${CYAN}━━━━━━━━━━━━ TOOLS ━━━━━━━━━━━━━━${NC}"
+    echo -e "  ${GREEN}[4]${NC} 🛠️   ${BOLD}INSTALL PANEL${NC}   — Install Pterodactyl Panel (fresh)"
+    echo -e "  ${GREEN}[5]${NC} 📊  ${BOLD}CEK SPEK VPS${NC}   — Benchmark spesifikasi VPS"
+    echo -e "  ${GREEN}[6]${NC} 🎨  ${BOLD}PASANG THEMA${NC}   — Install thema Pterodactyl"
+    echo -e "  ${GREEN}[7]${NC} ☁️   ${BOLD}CLOUDFLARED${NC}    — Install & setup Cloudflare Tunnel"
+    echo ""
     echo -e "  ${RED}[0]${NC} ❌  Keluar\n"
-    echo -ne "  ${BOLD}Pilih opsi [1/2/3/0]: ${NC}"
+    echo -ne "  ${BOLD}Pilih opsi [0-7]: ${NC}"
     read -r OPTION
 
     case "$OPTION" in
-        1) run_backup   ;;
-        2) run_restore  ;;
-        3) run_cleanup  ;;
+        1) run_backup              ;;
+        2) run_restore             ;;
+        3) run_cleanup             ;;
+        4) run_install_panel       ;;
+        5) run_benchmark           ;;
+        6) run_install_theme       ;;
+        7) run_install_cloudflared ;;
         0)
             echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"
             exit 0
