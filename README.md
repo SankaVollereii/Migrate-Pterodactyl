@@ -116,6 +116,7 @@ certbot --nginx -d namadomain.com
 | **[8] Firewall** | Buka port (UFW/firewall-cmd) | Port + protokol |
 | **[9] Setup Swap** | Tambah RAM virtual (swap) | Ukuran swap |
 | **[10] Docker Clean** | Hapus docker tidak terpakai | Konfirmasi y/N |
+| **[11] WireGuard** | Install & setup WireGuard VPN | Ikuti wizard |
 
 > Semua dependency: **auto install.**
 
@@ -197,7 +198,16 @@ sudo bash migrate.sh
 ```
 
 Hapus semua container berhenti, image tidak terpakai, network, dan build cache.
-Tampilkan disk usage sebelum & sesudah cleanup.
+Tampilkan disk usage sebelum & sesudah cleanup. Opsi auto cleanup via cron job.
+
+### WireGuard VPN
+
+```bash
+sudo bash migrate.sh
+# Pilih [11] WIREGUARD
+```
+
+Install WireGuard VPN & kelola client. Jalankan ulang untuk tambah/hapus client.
 
 ---
 

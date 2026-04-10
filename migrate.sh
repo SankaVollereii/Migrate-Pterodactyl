@@ -1210,6 +1210,44 @@ run_docker_clean() {
 }
 
 # ============================================================
+#   OPSI 11: WIREGUARD VPN
+# ============================================================
+run_wireguard() {
+    log_section
+    log_step "WireGuard VPN Installer"
+    log_section
+
+    ensure_pkg "curl" "curl"
+
+    if command -v wg &>/dev/null; then
+        log_info "WireGuard sudah terinstall."
+        local wg_status
+        wg_status=$(wg show 2>/dev/null | head -5 || true)
+        if [ -n "$wg_status" ]; then
+            log_info "Interface aktif:"
+            echo "$wg_status"
+        fi
+        echo ""
+        log_info "Jalankan ulang installer untuk menambah/hapus client."
+    else
+        log_info "WireGuard belum terinstall, memulai installer..."
+    fi
+
+    echo ""
+    log_info "Menjalankan WireGuard installer..."
+    log_info "Ikuti instruksi di layar."
+    echo ""
+
+    bash <(curl -sL https://raw.githubusercontent.com/angristan/wireguard-install/master/wireguard-install.sh)
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  WIREGUARD SETUP SELESAI!${NC}"
+    echo -e "  File config client: ${CYAN}/root/*.conf${NC}"
+    echo -e "  Cek status: ${CYAN}wg show${NC}\n"
+    log_section
+}
+
+# ============================================================
 #   MAIN MENU
 # ============================================================
 main() {
@@ -1230,9 +1268,10 @@ main() {
     echo -e "  ${GREEN}[8]${NC} 🔥  ${BOLD}FIREWALL${NC}       — Buka port (UFW/firewall-cmd)"
     echo -e "  ${GREEN}[9]${NC} 💾  ${BOLD}SETUP SWAP${NC}     — Tambah RAM virtual (swap memory)"
     echo -e "  ${GREEN}[10]${NC} 🐳 ${BOLD}DOCKER CLEAN${NC}  — Hapus docker yang tidak terpakai"
+    echo -e "  ${GREEN}[11]${NC} 🔐 ${BOLD}WIREGUARD${NC}     — Install & setup WireGuard VPN"
     echo ""
     echo -e "  ${RED}[0]${NC} ❌  Keluar\n"
-    echo -ne "  ${BOLD}Pilih opsi [0-10]: ${NC}"
+    echo -ne "  ${BOLD}Pilih opsi [0-11]: ${NC}"
     read -r OPTION
 
     timer_start
@@ -1248,6 +1287,7 @@ main() {
         8)  run_firewall            ;;
         9)  run_swap                ;;
         10) run_docker_clean        ;;
+        11) run_wireguard           ;;
         0)
             echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"
             exit 0
