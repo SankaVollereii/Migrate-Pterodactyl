@@ -1,7 +1,7 @@
 # 🦅 Pterodactyl Auto Migration & Tools
 
 > Migrasi panel, install fresh, benchmark VPS, pasang thema.
-> Satu script — semua otomatis. **Terima jadi.**
+> Satu script —  **semua otomatis.**
 
 ![Version](https://img.shields.io/badge/version-2.1.0-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
