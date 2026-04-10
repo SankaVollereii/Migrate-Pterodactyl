@@ -6,11 +6,6 @@
 #   Version : 2.1.0 — Fully Automated
 # ============================================================
 
-trap 'log_error "Error pada line $LINENO"; exit 1' ERR
-
-LOG_FILE="/root/Migrate-Pterodactyl/migrate.log"
-exec > >(tee "$LOG_FILE") 2>&1
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -39,6 +34,12 @@ log_warn()    { echo -e "  ${YELLOW}[!]${NC} $1"; }
 log_error()   { echo -e "  ${RED}[✗]${NC} $1"; }
 log_step()    { echo -e "\n  ${CYAN}${BOLD}[>>]${NC}${BOLD} $1${NC}"; }
 log_section() { echo -e "\n  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
+
+trap 'log_error "Error pada line $LINENO"; exit 1' ERR
+
+LOG_FILE="/root/Migrate-Pterodactyl/migrate.log"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
+exec > >(tee "$LOG_FILE") 2>&1
 
 validate_ip() {
     local ip="$1"
