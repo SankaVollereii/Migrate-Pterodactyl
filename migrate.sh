@@ -8,8 +8,8 @@
 
 trap 'log_error "Error pada line $LINENO"; exit 1' ERR
 
-LOG_FILE="/root/migrate_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "$LOG_FILE") 2>&1
+LOG_FILE="/root/Migrate-Pterodactyl/migrate.log"
+exec > >(tee "$LOG_FILE") 2>&1
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
