@@ -113,6 +113,8 @@ certbot --nginx -d namadomain.com
 | **[5] Cek Spek VPS** | Benchmark CPU, RAM, Disk, Network | Otomatis |
 | **[6] Pasang Thema** | Install thema Pterodactyl | Ikuti wizard |
 | **[7] Cloudflared** | Install & setup Cloudflare Tunnel | Token tunnel |
+| **[8] Firewall** | Buka port (UFW/firewall-cmd) | Port + protokol |
+| **[9] Setup Swap** | Tambah RAM virtual (swap) | Ukuran swap |
 
 > Semua dependency: **auto install.**
 
@@ -161,6 +163,30 @@ sudo cloudflared service install eyJhIjo...
 ```
 
 Script akan otomatis mengambil tokennya saja.
+
+### Firewall — Buka Port
+
+```bash
+sudo bash migrate.sh
+# Pilih [8] FIREWALL
+```
+
+Buka port dengan pilihan protokol:
+- **[1]** TCP saja
+- **[2]** UDP saja
+- **[3]** TCP + UDP (keduanya)
+
+Support UFW (Ubuntu/Debian) dan firewall-cmd (CentOS/RHEL). Bisa buka banyak port sekaligus.
+
+### Setup Swap Memory
+
+```bash
+sudo bash migrate.sh
+# Pilih [9] SETUP SWAP
+```
+
+Tambah RAM virtual pakai swap file. Berguna untuk VPS RAM kecil (1-2GB).
+Script otomatis rekomendasi ukuran swap berdasarkan RAM, cek disk space, dan persist setelah reboot.
 
 ---
 

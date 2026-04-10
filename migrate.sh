@@ -6,7 +6,7 @@
 #   Version : 2.1.0 — Fully Automated
 # ============================================================
 
-set -euo pipefail
+trap 'log_error "Error pada line $LINENO"; exit 1' ERR
 
 LOG_FILE="/root/migrate_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -55,6 +55,20 @@ validate_ip() {
 
 cleanup_env() {
     unset MYSQL_PWD MYSQL_ROOT_PASS DB_PASSWORD NEW_VPS_PASS 2>/dev/null || true
+}
+
+START_TIME=0
+timer_start() { START_TIME=$(date +%s); }
+timer_show() {
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - START_TIME))
+    local mins=$((elapsed / 60))
+    local secs=$((elapsed % 60))
+    if [ $mins -gt 0 ]; then
+        log_info "Waktu eksekusi: ${BOLD}${mins}m ${secs}s${NC}"
+    else
+        log_info "Waktu eksekusi: ${BOLD}${secs}s${NC}"
+    fi
 }
 
 check_root() {
@@ -837,6 +851,215 @@ run_install_cloudflared() {
 }
 
 # ============================================================
+#   OPSI 8: FIREWALL SETUP
+# ============================================================
+run_firewall() {
+    log_section
+    log_step "Firewall — Buka Port"
+    log_section
+
+    local FW_CMD=""
+    if command -v ufw &>/dev/null; then
+        FW_CMD="ufw"
+        if ! ufw status | grep -q "active" 2>/dev/null; then
+            log_warn "UFW belum aktif."
+            echo -ne "  ${YELLOW}[?]${NC}${BOLD} Aktifkan UFW sekarang? [y/N]: ${NC}"
+            read -r ENABLE_UFW
+            if [[ "$ENABLE_UFW" =~ ^[Yy]$ ]]; then
+                ufw --force enable > /dev/null 2>&1
+                ufw allow 22/tcp > /dev/null 2>&1
+                log_info "UFW diaktifkan (port 22/tcp otomatis dibuka)."
+            else
+                log_warn "UFW tidak diaktifkan, lanjut..."
+            fi
+        fi
+    elif command -v firewall-cmd &>/dev/null; then
+        FW_CMD="firewall-cmd"
+    else
+        log_error "Tidak ada firewall yang terdeteksi (ufw/firewall-cmd)!"
+        log_info "Install UFW dengan: apt install ufw -y"
+        return
+    fi
+
+    log_info "Firewall terdeteksi: ${BOLD}${FW_CMD}${NC}"
+
+    while true; do
+        echo ""
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Masukkan port yang ingin dibuka (contoh: 9002): ${NC}"
+        read -r FW_PORT
+
+        if [ -z "$FW_PORT" ]; then
+            log_warn "Selesai, kembali ke menu."
+            break
+        fi
+
+        if ! [[ "$FW_PORT" =~ ^[0-9]+$ ]] || [ "$FW_PORT" -lt 1 ] || [ "$FW_PORT" -gt 65535 ]; then
+            log_error "Port tidak valid: $FW_PORT (harus 1-65535)"
+            continue
+        fi
+
+        echo -e "  ${BOLD}Pilih protokol:${NC}"
+        echo -e "  ${GREEN}[1]${NC} TCP saja"
+        echo -e "  ${GREEN}[2]${NC} UDP saja"
+        echo -e "  ${GREEN}[3]${NC} TCP + UDP (keduanya)"
+        echo -ne "  ${BOLD}Pilih [1/2/3]: ${NC}"
+        read -r FW_PROTO
+
+        local protos=()
+        case "$FW_PROTO" in
+            1) protos=("tcp") ;;
+            2) protos=("udp") ;;
+            3) protos=("tcp" "udp") ;;
+            *)
+                log_error "Pilihan tidak valid!"
+                continue
+                ;;
+        esac
+
+        for proto in "${protos[@]}"; do
+            if [ "$FW_CMD" = "ufw" ]; then
+                ufw allow "${FW_PORT}/${proto}" > /dev/null 2>&1 \
+                    && log_info "Port ${GREEN}${FW_PORT}/${proto}${NC} berhasil dibuka." \
+                    || log_error "Gagal membuka port ${FW_PORT}/${proto}!"
+            elif [ "$FW_CMD" = "firewall-cmd" ]; then
+                firewall-cmd --permanent --add-port="${FW_PORT}/${proto}" > /dev/null 2>&1 \
+                    && log_info "Port ${GREEN}${FW_PORT}/${proto}${NC} berhasil dibuka." \
+                    || log_error "Gagal membuka port ${FW_PORT}/${proto}!"
+            fi
+        done
+
+        if [ "$FW_CMD" = "firewall-cmd" ]; then
+            firewall-cmd --reload > /dev/null 2>&1
+        fi
+
+        echo -ne "\n  ${YELLOW}[?]${NC}${BOLD} Buka port lain? [y/N]: ${NC}"
+        read -r AGAIN
+        if [[ ! "$AGAIN" =~ ^[Yy]$ ]]; then
+            break
+        fi
+    done
+
+    echo ""
+    log_step "Status Firewall:"
+    if [ "$FW_CMD" = "ufw" ]; then
+        ufw status numbered 2>/dev/null
+    elif [ "$FW_CMD" = "firewall-cmd" ]; then
+        firewall-cmd --list-all 2>/dev/null
+    fi
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  FIREWALL SETUP SELESAI!${NC}\n"
+    log_section
+}
+
+# ============================================================
+#   OPSI 9: SETUP SWAP
+# ============================================================
+run_swap() {
+    log_section
+    log_step "Setup Swap Memory"
+    log_section
+
+    local current_swap
+    current_swap=$(free -m | awk '/^Swap:/ {print $2}')
+    local total_ram
+    total_ram=$(free -m | awk '/^Mem:/ {print $2}')
+
+    log_info "RAM     : ${BOLD}${total_ram}MB${NC}"
+    log_info "Swap    : ${BOLD}${current_swap}MB${NC}"
+
+    if [ "$current_swap" -gt 0 ]; then
+        log_warn "Swap sudah aktif (${current_swap}MB)."
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Hapus swap lama dan buat baru? [y/N]: ${NC}"
+        read -r CONFIRM
+        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+            log_warn "Dibatalkan."
+            return
+        fi
+        log_info "Menonaktifkan swap lama..."
+        swapoff -a 2>/dev/null
+        rm -f /swapfile 2>/dev/null
+        sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
+        log_info "Swap lama dihapus."
+    fi
+
+    local recommended
+    if [ "$total_ram" -le 1024 ]; then
+        recommended="2G"
+    elif [ "$total_ram" -le 2048 ]; then
+        recommended="2G"
+    elif [ "$total_ram" -le 4096 ]; then
+        recommended="4G"
+    else
+        recommended="4G"
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Ukuran swap yang direkomendasikan:${NC}"
+    echo -e "  ${CYAN}  ▸${NC} RAM ${total_ram}MB → Swap ${BOLD}${recommended}${NC}"
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Ukuran swap [${recommended}]: ${NC}"
+    read -r SWAP_SIZE
+    SWAP_SIZE=${SWAP_SIZE:-$recommended}
+
+    if [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]]; then
+        log_error "Format tidak valid! Gunakan format: 2G, 4G, 512M, dll."
+        return
+    fi
+
+    local avail_disk
+    avail_disk=$(df -BM / | awk 'NR==2 {print $4}' | tr -d 'M')
+    local swap_mb
+    if [[ "$SWAP_SIZE" =~ [Gg]$ ]]; then
+        swap_mb=$(( ${SWAP_SIZE%[Gg]} * 1024 ))
+    else
+        swap_mb=${SWAP_SIZE%[Mm]}
+    fi
+
+    if [ "$swap_mb" -gt "$avail_disk" ]; then
+        log_error "Disk tidak cukup! Tersedia: ${avail_disk}MB, diminta: ${swap_mb}MB"
+        return
+    fi
+
+    log_step "Membuat swap ${SWAP_SIZE}..."
+
+    log_info "Mengalokasikan file swap..."
+    fallocate -l "$SWAP_SIZE" /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count="$swap_mb" status=progress 2>/dev/null
+    chmod 600 /swapfile
+    log_info "File swap dibuat."
+
+    log_info "Memformat swap..."
+    mkswap /swapfile > /dev/null 2>&1
+    log_info "Mengaktifkan swap..."
+    swapon /swapfile
+
+    if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        log_info "Swap ditambahkan ke /etc/fstab (persist setelah reboot)."
+    fi
+
+    local swappiness
+    swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null)
+    if [ "$swappiness" -gt 30 ]; then
+        sysctl vm.swappiness=10 > /dev/null 2>&1
+        if ! grep -q 'vm.swappiness' /etc/sysctl.conf 2>/dev/null; then
+            echo 'vm.swappiness=10' >> /etc/sysctl.conf
+        fi
+        log_info "Swappiness diatur ke 10 (default: ${swappiness})."
+    fi
+
+    echo ""
+    log_step "Status Swap:"
+    free -h | head -1
+    free -h | grep -i swap
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  SWAP ${SWAP_SIZE} BERHASIL DISETUP!${NC}"
+    echo -e "  Swap aktif dan persist setelah reboot.\n"
+    log_section
+}
+
+# ============================================================
 #   MAIN MENU
 # ============================================================
 main() {
@@ -854,10 +1077,14 @@ main() {
     echo -e "  ${GREEN}[5]${NC} 📊  ${BOLD}CEK SPEK VPS${NC}   — Benchmark spesifikasi VPS"
     echo -e "  ${GREEN}[6]${NC} 🎨  ${BOLD}PASANG THEMA${NC}   — Install thema Pterodactyl"
     echo -e "  ${GREEN}[7]${NC} ☁️   ${BOLD}CLOUDFLARED${NC}    — Install & setup Cloudflare Tunnel"
+    echo -e "  ${GREEN}[8]${NC} 🔥  ${BOLD}FIREWALL${NC}       — Buka port (UFW/firewall-cmd)"
+    echo -e "  ${GREEN}[9]${NC} 💾  ${BOLD}SETUP SWAP${NC}     — Tambah RAM virtual (swap memory)"
     echo ""
     echo -e "  ${RED}[0]${NC} ❌  Keluar\n"
-    echo -ne "  ${BOLD}Pilih opsi [0-7]: ${NC}"
+    echo -ne "  ${BOLD}Pilih opsi [0-9]: ${NC}"
     read -r OPTION
+
+    timer_start
 
     case "$OPTION" in
         1) run_backup              ;;
@@ -867,6 +1094,8 @@ main() {
         5) run_benchmark           ;;
         6) run_install_theme       ;;
         7) run_install_cloudflared ;;
+        8) run_firewall            ;;
+        9) run_swap                ;;
         0)
             echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"
             exit 0
@@ -876,6 +1105,8 @@ main() {
             exit 1
             ;;
     esac
+
+    timer_show
 }
 
 main "$@"
