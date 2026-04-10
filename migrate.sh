@@ -1270,9 +1270,9 @@ run_migrate_domain() {
     fi
 
     local current_url
-    current_url=$(grep -w "^APP_URL" .env | cut -d '=' -f2- | tr -d ' \r')
+    current_url=$(grep -w "^APP_URL" .env | cut -d '=' -f2- | tr -d ' \r' || true)
     local current_domain
-    current_domain=$(echo "$current_url" | sed 's|https\?://||')
+    current_domain=$(echo "$current_url" | sed 's|https\?://||' || true)
 
     log_info "Domain saat ini: ${BOLD}${current_domain}${NC}"
     log_info "APP_URL saat ini: ${BOLD}${current_url}${NC}"
@@ -1311,7 +1311,7 @@ run_migrate_domain() {
     fi
 
     log_step "Mengupdate APP_URL di .env..."
-    sed -i "s|^APP_URL=.*|APP_URL=${new_url}|" .env
+    sed -i "s|^APP_URL=.*|APP_URL=${new_url}|" .env || true
     log_info "APP_URL diperbarui."
 
     log_step "Mengupdate konfigurasi Nginx..."
@@ -1324,11 +1324,11 @@ run_migrate_domain() {
     done
 
     if [ -n "$nginx_conf" ]; then
-        sed -i "s|server_name .*|server_name ${NEW_DOMAIN};|" "$nginx_conf"
+        sed -i "s|server_name .*|server_name ${NEW_DOMAIN};|" "$nginx_conf" || true
         log_info "Nginx config diperbarui: ${nginx_conf}"
 
         if nginx -t > /dev/null 2>&1; then
-            systemctl reload nginx 2>/dev/null
+            systemctl reload nginx 2>/dev/null || true
             log_info "Nginx di-reload."
         else
             log_error "Nginx config error! Cek manual: nginx -t"
@@ -1338,11 +1338,11 @@ run_migrate_domain() {
     fi
 
     log_step "Membersihkan cache..."
-    php artisan config:clear --quiet 2>/dev/null && log_info "Config cache dibersihkan."
-    php artisan cache:clear --quiet 2>/dev/null && log_info "App cache dibersihkan."
-    php artisan view:clear --quiet 2>/dev/null && log_info "View cache dibersihkan."
+    php artisan config:clear --quiet 2>/dev/null && log_info "Config cache dibersihkan." || true
+    php artisan cache:clear --quiet 2>/dev/null && log_info "App cache dibersihkan." || true
+    php artisan view:clear --quiet 2>/dev/null && log_info "View cache dibersihkan." || true
 
-    chown -R www-data:www-data /var/www/pterodactyl 2>/dev/null
+    chown -R www-data:www-data /var/www/pterodactyl 2>/dev/null || true
 
     echo ""
     echo -ne "  ${YELLOW}[?]${NC}${BOLD} Pasang SSL (Certbot) untuk ${NEW_DOMAIN}? [y/N]: ${NC}"
@@ -1351,7 +1351,7 @@ run_migrate_domain() {
         if ! command -v certbot &>/dev/null; then
             log_info "Menginstall Certbot..."
             detect_os
-            $PKG_INSTALL certbot python3-certbot-nginx > /dev/null 2>&1
+            $PKG_INSTALL certbot python3-certbot-nginx > /dev/null 2>&1 || true
         fi
         log_info "Menjalankan Certbot..."
         certbot --nginx -d "$NEW_DOMAIN" && log_info "SSL berhasil dipasang!" || log_warn "Certbot gagal, pasang manual nanti."
