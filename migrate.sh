@@ -3,8 +3,13 @@
 # ============================================================
 #   Auto Script Migrasi Pterodactyl Panel
 #   GitHub  : https://github.com/SankaVollereii/Migrate-Pterodactyl
-#   Version : 2.0.0 — Fully Automated
+#   Version : 2.1.0 — Fully Automated
 # ============================================================
+
+set -euo pipefail
+
+LOG_FILE="/root/migrate_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,17 +29,33 @@ show_banner() {
     echo "  ███████║██║  ██║██║ ╚████║██║  ██╗██║  ██║"
     echo "  ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝"
     echo -e "${NC}"
-    echo -e "${BOLD}  Auto Script Migrasi Pterodactyl Panel v2.0.0${NC}"
+    echo -e "${BOLD}  Auto Script Migrasi Pterodactyl Panel v2.1.0${NC}"
     echo -e "  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }
 
-# --- Fungsi Log ---
 log_info()    { echo -e "  ${GREEN}[✓]${NC} $1"; }
 log_warn()    { echo -e "  ${YELLOW}[!]${NC} $1"; }
 log_error()   { echo -e "  ${RED}[✗]${NC} $1"; }
 log_step()    { echo -e "\n  ${CYAN}${BOLD}[>>]${NC}${BOLD} $1${NC}"; }
 log_section() { echo -e "\n  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
+
+validate_ip() {
+    local ip="$1"
+    if [ -z "$ip" ]; then
+        log_error "IP tidak boleh kosong!"
+        return 1
+    fi
+    if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ ! "$ip" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+        log_error "Format IP/hostname tidak valid: $ip"
+        return 1
+    fi
+    return 0
+}
+
+cleanup_env() {
+    unset MYSQL_PWD MYSQL_ROOT_PASS DB_PASSWORD NEW_VPS_PASS 2>/dev/null || true
+}
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -90,7 +111,6 @@ install_dependencies() {
         done
 
         if [ -z "$php_ver" ]; then
-            # PPA hanya tersedia di Ubuntu
             if grep -qi "ubuntu" /etc/os-release 2>/dev/null; then
                 log_info "Menambahkan repository PHP (ondrej/php)..."
                 ensure_pkg "add-apt-repository" "software-properties-common"
@@ -194,11 +214,20 @@ setup_nginx() {
     local php_ver
     php_ver=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
 
-    local nginx_conf="/etc/nginx/sites-available/pterodactyl.conf"
+    local nginx_conf
+    if [ -d "/etc/nginx/sites-available" ]; then
+        nginx_conf="/etc/nginx/sites-available/pterodactyl.conf"
+    elif [ -d "/etc/nginx/conf.d" ]; then
+        nginx_conf="/etc/nginx/conf.d/pterodactyl.conf"
+    else
+        log_warn "Direktori konfigurasi Nginx tidak ditemukan, membuat /etc/nginx/conf.d/"
+        mkdir -p /etc/nginx/conf.d
+        nginx_conf="/etc/nginx/conf.d/pterodactyl.conf"
+    fi
 
     local domain
     domain=$(grep -w "^APP_URL" /var/www/pterodactyl/.env 2>/dev/null \
-        | cut -d '=' -f2 | tr -d ' \r' | sed 's|https\?://||')
+        | cut -d '=' -f2- | tr -d ' \r' | sed 's|https\?://||')
     domain=${domain:-"_"}
 
     if [ ! -f "$nginx_conf" ]; then
@@ -246,8 +275,10 @@ server {
     }
 }
 NGINXEOF
-        ln -sf "$nginx_conf" /etc/nginx/sites-enabled/pterodactyl.conf 2>/dev/null
-        rm -f /etc/nginx/sites-enabled/default 2>/dev/null
+        if [ -d "/etc/nginx/sites-enabled" ]; then
+            ln -sf "$nginx_conf" /etc/nginx/sites-enabled/pterodactyl.conf 2>/dev/null
+            rm -f /etc/nginx/sites-enabled/default 2>/dev/null
+        fi
         nginx -t > /dev/null 2>&1 && systemctl reload nginx 2>/dev/null
         log_info "Konfigurasi Nginx dibuat untuk domain: ${domain}"
     else
@@ -261,7 +292,6 @@ NGINXEOF
 setup_cron_and_worker() {
     log_step "Setup Cronjob & Queue Worker..."
 
-    # Cronjob
     local cron_entry="* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1"
     if ! crontab -l 2>/dev/null | grep -q "pterodactyl/artisan schedule:run"; then
         (crontab -l 2>/dev/null; echo "$cron_entry") | crontab -
@@ -322,15 +352,24 @@ run_backup() {
     log_step "Masukkan informasi VPS Baru untuk transfer otomatis..."
     echo -ne "  ${YELLOW}[?]${NC}${BOLD} IP VPS Baru: ${NC}"
     read -r NEW_VPS_IP
+    validate_ip "$NEW_VPS_IP" || exit 1
     echo -ne "  ${YELLOW}[?]${NC}${BOLD} Port SSH VPS Baru [22]: ${NC}"
     read -r NEW_VPS_PORT
     NEW_VPS_PORT=${NEW_VPS_PORT:-22}
+    if ! [[ "$NEW_VPS_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_VPS_PORT" -lt 1 ] || [ "$NEW_VPS_PORT" -gt 65535 ]; then
+        log_error "Port SSH tidak valid: $NEW_VPS_PORT (harus 1-65535)"
+        exit 1
+    fi
     echo -ne "  ${YELLOW}[?]${NC}${BOLD} Username SSH VPS Baru [root]: ${NC}"
     read -r NEW_VPS_USER
     NEW_VPS_USER=${NEW_VPS_USER:-root}
     echo -ne "  ${YELLOW}[?]${NC}${BOLD} Password SSH VPS Baru: ${NC}"
     read -s NEW_VPS_PASS
     echo ""
+    if [ -z "$NEW_VPS_PASS" ]; then
+        log_error "Password SSH tidak boleh kosong!"
+        exit 1
+    fi
 
     log_step "Menguji koneksi SSH ke VPS Baru (${NEW_VPS_IP})..."
     if ! sshpass -p "$NEW_VPS_PASS" ssh \
@@ -365,8 +404,7 @@ run_backup() {
     log_info "Database : ${DB_DATABASE} | Host: ${DB_HOST}:${DB_PORT}"
 
     log_step "Mem-backup database '${DB_DATABASE}'..."
-    export MYSQL_PWD="$DB_PASSWORD"
-    if mysqldump -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" \
+    if MYSQL_PWD="$DB_PASSWORD" mysqldump -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" \
         "$DB_DATABASE" > /root/panel_db_backup.sql 2>/dev/null; then
         local db_size
         db_size=$(du -sh /root/panel_db_backup.sql | cut -f1)
@@ -395,26 +433,32 @@ run_backup() {
     log_info "Mengirim panel_db_backup.sql..."
     if sshpass -p "$NEW_VPS_PASS" scp \
         -o StrictHostKeyChecking=no \
+        -o ServerAliveInterval=60 \
         -P "$NEW_VPS_PORT" \
         /root/panel_db_backup.sql \
         "${NEW_VPS_USER}@${NEW_VPS_IP}:/root/"; then
         log_info "panel_db_backup.sql berhasil dikirim."
     else
         log_error "Gagal mengirim panel_db_backup.sql!"
+        cleanup_env
         exit 1
     fi
 
     log_info "Mengirim panel_files_backup.tar.gz (mungkin memakan waktu)..."
     if sshpass -p "$NEW_VPS_PASS" scp \
         -o StrictHostKeyChecking=no \
+        -o ServerAliveInterval=60 \
         -P "$NEW_VPS_PORT" \
         /root/panel_files_backup.tar.gz \
         "${NEW_VPS_USER}@${NEW_VPS_IP}:/root/"; then
         log_info "panel_files_backup.tar.gz berhasil dikirim."
     else
         log_error "Gagal mengirim panel_files_backup.tar.gz!"
+        cleanup_env
         exit 1
     fi
+
+    cleanup_env
 
     log_section
     echo -e "\n  ${GREEN}${BOLD}✅  BACKUP & TRANSFER SELESAI!${NC}\n"
@@ -532,8 +576,27 @@ run_restore() {
     local vps_ip
     vps_ip=$(curl -s --connect-timeout 5 --max-time 10 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
     local domain
-    domain=$(grep -w "^APP_URL" .env 2>/dev/null \
-        | cut -d '=' -f2 | tr -d ' \r' | sed 's|https\?://||')
+    local app_url
+    app_url=$(grep -w "^APP_URL" .env 2>/dev/null | cut -d '=' -f2- | tr -d ' \r')
+    domain=$(echo "$app_url" | sed 's|https\?://||')
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} APP_URL saat ini: ${CYAN}${app_url}${NC}\n"
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Apakah ingin mengubah APP_URL? [y/N]: ${NC}"
+    read -r CHANGE_URL
+    if [[ "$CHANGE_URL" =~ ^[Yy]$ ]]; then
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Masukkan APP_URL baru (contoh: https://panel.domain.com): ${NC}"
+        read -r NEW_APP_URL
+        if [ -n "$NEW_APP_URL" ]; then
+            sed -i "s|^APP_URL=.*|APP_URL=${NEW_APP_URL}|" .env
+            app_url="$NEW_APP_URL"
+            domain=$(echo "$app_url" | sed 's|https\?://||')
+            php artisan config:clear --quiet 2>/dev/null
+            log_info "APP_URL diperbarui ke: ${NEW_APP_URL}"
+        fi
+    fi
+
+    cleanup_env
 
     log_section
     echo -e "\n  ${GREEN}${BOLD}✅  RESTORE SELESAI! PANEL SIAP PAKAI! 🚀${NC}\n"
@@ -546,6 +609,7 @@ run_restore() {
     echo -e "\n  ${BOLD}(Opsional) Pasang SSL:${NC}"
     echo -e "  ${CYAN}  apt install certbot python3-certbot-nginx -y${NC}"
     echo -e "  ${CYAN}  certbot --nginx -d ${domain}${NC}\n"
+    echo -e "  ${BOLD}Log tersimpan di:${NC} ${CYAN}${LOG_FILE}${NC}\n"
     echo -e "  Nginx, MariaDB, Redis, Cronjob & Worker sudah jalan otomatis. ✅\n"
     log_section
 }
