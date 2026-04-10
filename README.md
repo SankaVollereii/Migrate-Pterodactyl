@@ -115,6 +115,7 @@ certbot --nginx -d namadomain.com
 | **[7] Cloudflared** | Install & setup Cloudflare Tunnel | Token tunnel |
 | **[8] Firewall** | Buka port (UFW/firewall-cmd) | Port + protokol |
 | **[9] Setup Swap** | Tambah RAM virtual (swap) | Ukuran swap |
+| **[10] Docker Clean** | Hapus docker tidak terpakai | Konfirmasi y/N |
 
 > Semua dependency: **auto install.**
 
@@ -187,6 +188,16 @@ sudo bash migrate.sh
 
 Tambah RAM virtual pakai swap file. Berguna untuk VPS RAM kecil (1-2GB).
 Script otomatis rekomendasi ukuran swap berdasarkan RAM, cek disk space, dan persist setelah reboot.
+
+### Docker Cleaner
+
+```bash
+sudo bash migrate.sh
+# Pilih [10] DOCKER CLEAN
+```
+
+Hapus semua container berhenti, image tidak terpakai, network, dan build cache.
+Tampilkan disk usage sebelum & sesudah cleanup.
 
 ---
 

@@ -1060,6 +1060,78 @@ run_swap() {
 }
 
 # ============================================================
+#   OPSI 10: DOCKER CLEANER
+# ============================================================
+run_docker_clean() {
+    log_section
+    log_step "Docker Cleaner — Hapus Resource Tidak Terpakai"
+    log_section
+
+    if ! command -v docker &>/dev/null; then
+        log_error "Docker tidak terinstall di VPS ini!"
+        return
+    fi
+
+    log_info "Docker terdeteksi: $(docker --version 2>&1)"
+
+    log_step "Penggunaan disk Docker saat ini:"
+    docker system df 2>/dev/null
+    echo ""
+
+    local containers images volumes
+    containers=$(docker ps -a -q --filter "status=exited" --filter "status=created" 2>/dev/null | wc -l)
+    images=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l)
+    volumes=$(docker volume ls -f "dangling=true" -q 2>/dev/null | wc -l)
+
+    log_info "Container berhenti : ${BOLD}${containers}${NC}"
+    log_info "Image dangling     : ${BOLD}${images}${NC}"
+    log_info "Volume tidak pakai : ${BOLD}${volumes}${NC}"
+
+    if [ "$containers" -eq 0 ] && [ "$images" -eq 0 ] && [ "$volumes" -eq 0 ]; then
+        local total_reclaimable
+        total_reclaimable=$(docker system df 2>/dev/null | awk 'NR>1 {print $NF}' | grep -cv '0B' || true)
+        if [ "$total_reclaimable" -eq 0 ]; then
+            log_info "Docker sudah bersih, tidak ada yang perlu dihapus."
+            return
+        fi
+    fi
+
+    echo ""
+    echo -e "  ${RED}${BOLD}⚠️  PERINGATAN:${NC} Ini akan menghapus SEMUA:"
+    echo -e "  ${YELLOW}  ▸${NC} Container yang berhenti"
+    echo -e "  ${YELLOW}  ▸${NC} Image yang tidak dipakai"
+    echo -e "  ${YELLOW}  ▸${NC} Network yang tidak dipakai"
+    echo -e "  ${YELLOW}  ▸${NC} Build cache"
+    echo ""
+    echo -ne "  ${RED}[?]${NC}${BOLD} Lanjutkan cleanup? [y/N]: ${NC}"
+    read -r CONFIRM
+
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        log_warn "Dibatalkan."
+        return
+    fi
+
+    log_step "Menjalankan docker system prune..."
+    docker system prune -a -f 2>&1
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Hapus juga volume yang tidak terpakai? [y/N]: ${NC}"
+    read -r PRUNE_VOL
+    if [[ "$PRUNE_VOL" =~ ^[Yy]$ ]]; then
+        log_info "Menghapus volume tidak terpakai..."
+        docker volume prune -f 2>&1
+    fi
+
+    echo ""
+    log_step "Penggunaan disk Docker setelah cleanup:"
+    docker system df 2>/dev/null
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  DOCKER CLEANUP SELESAI!${NC}\n"
+    log_section
+}
+
+# ============================================================
 #   MAIN MENU
 # ============================================================
 main() {
@@ -1079,23 +1151,25 @@ main() {
     echo -e "  ${GREEN}[7]${NC} ☁️   ${BOLD}CLOUDFLARED${NC}    — Install & setup Cloudflare Tunnel"
     echo -e "  ${GREEN}[8]${NC} 🔥  ${BOLD}FIREWALL${NC}       — Buka port (UFW/firewall-cmd)"
     echo -e "  ${GREEN}[9]${NC} 💾  ${BOLD}SETUP SWAP${NC}     — Tambah RAM virtual (swap memory)"
+    echo -e "  ${GREEN}[10]${NC} 🐳 ${BOLD}DOCKER CLEAN${NC}  — Hapus docker yang tidak terpakai"
     echo ""
     echo -e "  ${RED}[0]${NC} ❌  Keluar\n"
-    echo -ne "  ${BOLD}Pilih opsi [0-9]: ${NC}"
+    echo -ne "  ${BOLD}Pilih opsi [0-10]: ${NC}"
     read -r OPTION
 
     timer_start
 
     case "$OPTION" in
-        1) run_backup              ;;
-        2) run_restore             ;;
-        3) run_cleanup             ;;
-        4) run_install_panel       ;;
-        5) run_benchmark           ;;
-        6) run_install_theme       ;;
-        7) run_install_cloudflared ;;
-        8) run_firewall            ;;
-        9) run_swap                ;;
+        1)  run_backup              ;;
+        2)  run_restore             ;;
+        3)  run_cleanup             ;;
+        4)  run_install_panel       ;;
+        5)  run_benchmark           ;;
+        6)  run_install_theme       ;;
+        7)  run_install_cloudflared ;;
+        8)  run_firewall            ;;
+        9)  run_swap                ;;
+        10) run_docker_clean        ;;
         0)
             echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"
             exit 0
