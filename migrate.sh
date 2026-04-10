@@ -1248,6 +1248,126 @@ run_wireguard() {
 }
 
 # ============================================================
+#   OPSI 4: MIGRASI DOMAIN PANEL
+# ============================================================
+run_migrate_domain() {
+    log_section
+    log_step "Migrasi Domain Panel Pterodactyl"
+    log_section
+
+    if [ ! -d "/var/www/pterodactyl" ]; then
+        log_error "Folder /var/www/pterodactyl tidak ditemukan!"
+        log_warn "Pastikan panel sudah terinstall."
+        return
+    fi
+
+    cd /var/www/pterodactyl || { log_error "Gagal masuk ke /var/www/pterodactyl!"; return; }
+
+    if [ ! -f ".env" ]; then
+        log_error "File .env tidak ditemukan!"
+        return
+    fi
+
+    local current_url
+    current_url=$(grep -w "^APP_URL" .env | cut -d '=' -f2- | tr -d ' \r')
+    local current_domain
+    current_domain=$(echo "$current_url" | sed 's|https\?://||')
+
+    log_info "Domain saat ini: ${BOLD}${current_domain}${NC}"
+    log_info "APP_URL saat ini: ${BOLD}${current_url}${NC}"
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Masukkan domain baru (contoh: panel.domain.com): ${NC}"
+    read -r NEW_DOMAIN
+
+    if [ -z "$NEW_DOMAIN" ]; then
+        log_error "Domain tidak boleh kosong!"
+        return
+    fi
+
+    echo -e "  ${BOLD}Pilih protokol:${NC}"
+    echo -e "  ${GREEN}[1]${NC} https:// (recommended)"
+    echo -e "  ${GREEN}[2]${NC} http://"
+    echo -ne "  ${BOLD}Pilih [1/2]: ${NC}"
+    read -r PROTO_CHOICE
+
+    local new_url
+    case "$PROTO_CHOICE" in
+        1) new_url="https://${NEW_DOMAIN}" ;;
+        2) new_url="http://${NEW_DOMAIN}" ;;
+        *) new_url="https://${NEW_DOMAIN}" ;;
+    esac
+
+    echo ""
+    log_info "Domain baru : ${BOLD}${NEW_DOMAIN}${NC}"
+    log_info "APP_URL baru: ${BOLD}${new_url}${NC}"
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Lanjutkan migrasi domain? [y/N]: ${NC}"
+    read -r CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        log_warn "Dibatalkan."
+        return
+    fi
+
+    log_step "Mengupdate APP_URL di .env..."
+    sed -i "s|^APP_URL=.*|APP_URL=${new_url}|" .env
+    log_info "APP_URL diperbarui."
+
+    log_step "Mengupdate konfigurasi Nginx..."
+    local nginx_conf=""
+    for conf in /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/conf.d/pterodactyl.conf; do
+        if [ -f "$conf" ]; then
+            nginx_conf="$conf"
+            break
+        fi
+    done
+
+    if [ -n "$nginx_conf" ]; then
+        sed -i "s|server_name .*|server_name ${NEW_DOMAIN};|" "$nginx_conf"
+        log_info "Nginx config diperbarui: ${nginx_conf}"
+
+        if nginx -t > /dev/null 2>&1; then
+            systemctl reload nginx 2>/dev/null
+            log_info "Nginx di-reload."
+        else
+            log_error "Nginx config error! Cek manual: nginx -t"
+        fi
+    else
+        log_warn "File konfigurasi Nginx tidak ditemukan, skip."
+    fi
+
+    log_step "Membersihkan cache..."
+    php artisan config:clear --quiet 2>/dev/null && log_info "Config cache dibersihkan."
+    php artisan cache:clear --quiet 2>/dev/null && log_info "App cache dibersihkan."
+    php artisan view:clear --quiet 2>/dev/null && log_info "View cache dibersihkan."
+
+    chown -R www-data:www-data /var/www/pterodactyl 2>/dev/null
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Pasang SSL (Certbot) untuk ${NEW_DOMAIN}? [y/N]: ${NC}"
+    read -r SETUP_SSL
+    if [[ "$SETUP_SSL" =~ ^[Yy]$ ]]; then
+        if ! command -v certbot &>/dev/null; then
+            log_info "Menginstall Certbot..."
+            detect_os
+            $PKG_INSTALL certbot python3-certbot-nginx > /dev/null 2>&1
+        fi
+        log_info "Menjalankan Certbot..."
+        certbot --nginx -d "$NEW_DOMAIN" && log_info "SSL berhasil dipasang!" || log_warn "Certbot gagal, pasang manual nanti."
+    fi
+
+    local vps_ip
+    vps_ip=$(curl -s --connect-timeout 5 --max-time 10 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  MIGRASI DOMAIN SELESAI!${NC}\n"
+    echo -e "  ${BOLD}Domain baru:${NC} ${CYAN}${NEW_DOMAIN}${NC}"
+    echo -e "  ${BOLD}APP_URL:${NC}    ${CYAN}${new_url}${NC}"
+    echo -e "\n  ${BOLD}Pastikan A Record DNS mengarah ke:${NC} ${CYAN}${vps_ip}${NC}\n"
+    log_section
+}
+
+# ============================================================
 #   MAIN MENU
 # ============================================================
 main() {
@@ -1256,22 +1376,23 @@ main() {
 
     echo -e "  ${BOLD}Pilih mode yang sesuai dengan VPS kamu:${NC}\n"
     echo -e "  ${CYAN}━━━━━━━━━━━━ MIGRASI ━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}[1]${NC} 📤  ${BOLD}BACKUP${NC}   — Jalankan di VPS LAMA (auto kirim ke VPS Baru)"
-    echo -e "  ${GREEN}[2]${NC} 📥  ${BOLD}RESTORE${NC}  — Jalankan di VPS BARU (auto install & setup semua)"
-    echo -e "  ${RED}[3]${NC} 🗑️   ${BOLD}CLEANUP${NC}  — Bersihkan file backup di VPS"
+    echo -e "  ${GREEN}[1]${NC} 📤  ${BOLD}BACKUP${NC}    — Jalankan di VPS LAMA (auto kirim ke VPS Baru)"
+    echo -e "  ${GREEN}[2]${NC} 📥  ${BOLD}RESTORE${NC}   — Jalankan di VPS BARU (auto install & setup semua)"
+    echo -e "  ${RED}[3]${NC} 🗑️   ${BOLD}CLEANUP${NC}   — Bersihkan file backup di VPS"
+    echo -e "  ${GREEN}[4]${NC} 🌐  ${BOLD}GANTI DOMAIN${NC} — Migrasi domain panel Pterodactyl"
     echo ""
     echo -e "  ${CYAN}━━━━━━━━━━━━ TOOLS ━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}[4]${NC} 🛠️   ${BOLD}INSTALL PANEL${NC}   — Install Pterodactyl Panel (fresh)"
-    echo -e "  ${GREEN}[5]${NC} 📊  ${BOLD}CEK SPEK VPS${NC}   — Benchmark spesifikasi VPS"
-    echo -e "  ${GREEN}[6]${NC} 🎨  ${BOLD}PASANG THEMA${NC}   — Install thema Pterodactyl"
-    echo -e "  ${GREEN}[7]${NC} ☁️   ${BOLD}CLOUDFLARED${NC}    — Install & setup Cloudflare Tunnel"
-    echo -e "  ${GREEN}[8]${NC} 🔥  ${BOLD}FIREWALL${NC}       — Buka port (UFW/firewall-cmd)"
-    echo -e "  ${GREEN}[9]${NC} 💾  ${BOLD}SETUP SWAP${NC}     — Tambah RAM virtual (swap memory)"
+    echo -e "  ${GREEN}[5]${NC} 🛠️   ${BOLD}INSTALL PANEL${NC}   — Install Pterodactyl Panel (fresh)"
+    echo -e "  ${GREEN}[6]${NC} 💾  ${BOLD}SETUP SWAP${NC}     — Tambah RAM virtual (swap memory)"
+    echo -e "  ${GREEN}[7]${NC} 🎨  ${BOLD}PASANG THEMA${NC}   — Install thema Pterodactyl"
+    echo -e "  ${GREEN}[8]${NC} ☁️   ${BOLD}CLOUDFLARED${NC}    — Install & setup Cloudflare Tunnel"
+    echo -e "  ${GREEN}[9]${NC} 🔥  ${BOLD}FIREWALL${NC}       — Buka port (UFW/firewall-cmd)"
     echo -e "  ${GREEN}[10]${NC} 🐳 ${BOLD}DOCKER CLEAN${NC}  — Hapus docker yang tidak terpakai"
     echo -e "  ${GREEN}[11]${NC} 🔐 ${BOLD}WIREGUARD${NC}     — Install & setup WireGuard VPN"
+    echo -e "  ${GREEN}[12]${NC} 📊 ${BOLD}CEK SPEK VPS${NC}  — Benchmark spesifikasi VPS"
     echo ""
     echo -e "  ${RED}[0]${NC} ❌  Keluar\n"
-    echo -ne "  ${BOLD}Pilih opsi [0-11]: ${NC}"
+    echo -ne "  ${BOLD}Pilih opsi [0-12]: ${NC}"
     read -r OPTION
 
     timer_start
@@ -1280,14 +1401,15 @@ main() {
         1)  run_backup              ;;
         2)  run_restore             ;;
         3)  run_cleanup             ;;
-        4)  run_install_panel       ;;
-        5)  run_benchmark           ;;
-        6)  run_install_theme       ;;
-        7)  run_install_cloudflared ;;
-        8)  run_firewall            ;;
-        9)  run_swap                ;;
+        4)  run_migrate_domain      ;;
+        5)  run_install_panel       ;;
+        6)  run_swap                ;;
+        7)  run_install_theme       ;;
+        8)  run_install_cloudflared ;;
+        9)  run_firewall            ;;
         10) run_docker_clean        ;;
         11) run_wireguard           ;;
+        12) run_benchmark           ;;
         0)
             echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"
             exit 0

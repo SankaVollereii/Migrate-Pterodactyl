@@ -109,44 +109,60 @@ certbot --nginx -d namadomain.com
 | **[1] Backup** | Backup & kirim ke VPS Baru | IP, Port, User, Pass SSH |
 | **[2] Restore** | Restore & setup di VPS Baru | Password root MySQL |
 | **[3] Cleanup** | Hapus file backup | Konfirmasi y/N |
-| **[4] Install Panel** | Install Pterodactyl fresh | Ikuti wizard |
-| **[5] Cek Spek VPS** | Benchmark CPU, RAM, Disk, Network | Otomatis |
-| **[6] Pasang Thema** | Install thema Pterodactyl | Ikuti wizard |
-| **[7] Cloudflared** | Install & setup Cloudflare Tunnel | Token tunnel |
-| **[8] Firewall** | Buka port (UFW/firewall-cmd) | Port + protokol |
-| **[9] Setup Swap** | Tambah RAM virtual (swap) | Ukuran swap |
+| **[4] Ganti Domain** | Migrasi domain panel + SSL | Domain baru |
+| **[5] Install Panel** | Install Pterodactyl fresh | Ikuti wizard |
+| **[6] Setup Swap** | Tambah RAM virtual (swap) | Ukuran swap |
+| **[7] Pasang Thema** | Install thema Pterodactyl | Ikuti wizard |
+| **[8] Cloudflared** | Install & setup Cloudflare Tunnel | Token tunnel |
+| **[9] Firewall** | Buka port (UFW/firewall-cmd) | Port + protokol |
 | **[10] Docker Clean** | Hapus docker tidak terpakai | Konfirmasi y/N |
 | **[11] WireGuard** | Install & setup WireGuard VPN | Ikuti wizard |
+| **[12] Cek Spek VPS** | Benchmark CPU, RAM, Disk, Network | Otomatis |
 
 > Semua dependency: **auto install.**
 
 ---
 
-## 🛠️ Tools Tambahan
+## 🛠️ Tools & Fitur Tambahan
+
+### Ganti Domain Panel
+
+```bash
+sudo bash migrate.sh
+# Pilih [4] GANTI DOMAIN
+```
+
+Ganti domain panel Pterodactyl. Script otomatis update:
+- `APP_URL` di `.env`
+- `server_name` di Nginx config
+- Clear cache Laravel
+- Opsional: pasang SSL via Certbot
+- Tampilkan IP VPS untuk setting DNS A Record
 
 ### Install Panel Fresh
 
 ```bash
 sudo bash migrate.sh
-# Pilih [4] INSTALL PANEL
+# Pilih [5] INSTALL PANEL
 ```
 
 Menggunakan [pterodactyl-installer.se](https://pterodactyl-installer.se) — ikuti instruksi di layar.
 
-### Cek Spesifikasi VPS
+### Setup Swap Memory
 
 ```bash
 sudo bash migrate.sh
-# Pilih [5] CEK SPEK VPS
+# Pilih [6] SETUP SWAP
 ```
 
-Menampilkan info CPU, RAM, Disk, I/O speed, dan network speed.
+Tambah RAM virtual pakai swap file. Berguna untuk VPS RAM kecil (1-2GB).
+Script otomatis rekomendasi ukuran swap berdasarkan RAM, cek disk space, dan persist setelah reboot.
 
 ### Pasang Thema
 
 ```bash
 sudo bash migrate.sh
-# Pilih [6] PASANG THEMA
+# Pilih [7] PASANG THEMA
 ```
 
 Menggunakan [Thema-Pterodactyl](https://github.com/SankaVollereii/Thema-Pterodactyl) — panel harus sudah terinstall.
@@ -155,7 +171,7 @@ Menggunakan [Thema-Pterodactyl](https://github.com/SankaVollereii/Thema-Pterodac
 
 ```bash
 sudo bash migrate.sh
-# Pilih [7] CLOUDFLARED
+# Pilih [8] CLOUDFLARED
 ```
 
 Install cloudflared & setup tunnel otomatis. Bisa paste token langsung atau perintah lengkap seperti:
@@ -170,7 +186,7 @@ Script akan otomatis mengambil tokennya saja.
 
 ```bash
 sudo bash migrate.sh
-# Pilih [8] FIREWALL
+# Pilih [9] FIREWALL
 ```
 
 Buka port dengan pilihan protokol:
@@ -179,16 +195,6 @@ Buka port dengan pilihan protokol:
 - **[3]** TCP + UDP (keduanya)
 
 Support UFW (Ubuntu/Debian) dan firewall-cmd (CentOS/RHEL). Bisa buka banyak port sekaligus.
-
-### Setup Swap Memory
-
-```bash
-sudo bash migrate.sh
-# Pilih [9] SETUP SWAP
-```
-
-Tambah RAM virtual pakai swap file. Berguna untuk VPS RAM kecil (1-2GB).
-Script otomatis rekomendasi ukuran swap berdasarkan RAM, cek disk space, dan persist setelah reboot.
 
 ### Docker Cleaner
 
@@ -208,6 +214,15 @@ sudo bash migrate.sh
 ```
 
 Install WireGuard VPN & kelola client. Jalankan ulang untuk tambah/hapus client.
+
+### Cek Spesifikasi VPS
+
+```bash
+sudo bash migrate.sh
+# Pilih [12] CEK SPEK VPS
+```
+
+Menampilkan info CPU, RAM, Disk, I/O speed, dan network speed.
 
 ---
 
