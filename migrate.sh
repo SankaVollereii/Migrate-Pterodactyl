@@ -1129,6 +1129,84 @@ run_docker_clean() {
     log_section
     echo -e "\n  ${GREEN}${BOLD}✅  DOCKER CLEANUP SELESAI!${NC}\n"
     log_section
+
+    local existing_cron
+    existing_cron=$(crontab -l 2>/dev/null | grep "docker system prune" || true)
+
+    if [ -n "$existing_cron" ]; then
+        log_info "Auto cleanup sudah terjadwal:"
+        echo -e "  ${CYAN}  $existing_cron${NC}"
+        echo ""
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Hapus jadwal auto cleanup? [y/N]: ${NC}"
+        read -r DEL_CRON
+        if [[ "$DEL_CRON" =~ ^[Yy]$ ]]; then
+            crontab -l 2>/dev/null | grep -v "docker system prune" | crontab -
+            log_info "Jadwal auto cleanup dihapus."
+        fi
+        return
+    fi
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Buat jadwal auto cleanup otomatis? [y/N]: ${NC}"
+    read -r SETUP_CRON
+
+    if [[ ! "$SETUP_CRON" =~ ^[Yy]$ ]]; then
+        return
+    fi
+
+    echo -e "\n  ${BOLD}Jalankan auto cleanup setiap berapa jam?${NC}"
+    echo -e "  ${GREEN}[1]${NC} Setiap 6 jam"
+    echo -e "  ${GREEN}[2]${NC} Setiap 12 jam"
+    echo -e "  ${GREEN}[3]${NC} Setiap 24 jam (1x sehari)"
+    echo -e "  ${GREEN}[4]${NC} Custom (masukkan sendiri)"
+    echo -ne "  ${BOLD}Pilih [1/2/3/4]: ${NC}"
+    read -r CRON_CHOICE
+
+    local cron_hours
+    case "$CRON_CHOICE" in
+        1) cron_hours=6  ;;
+        2) cron_hours=12 ;;
+        3) cron_hours=24 ;;
+        4)
+            echo -ne "  ${YELLOW}[?]${NC}${BOLD} Setiap berapa jam? (1-168): ${NC}"
+            read -r cron_hours
+            if ! [[ "$cron_hours" =~ ^[0-9]+$ ]] || [ "$cron_hours" -lt 1 ] || [ "$cron_hours" -gt 168 ]; then
+                log_error "Input tidak valid! (harus 1-168)"
+                return
+            fi
+            ;;
+        *)
+            log_error "Pilihan tidak valid!"
+            return
+            ;;
+    esac
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Ikut hapus volume juga di auto cleanup? [y/N]: ${NC}"
+    read -r AUTO_VOL
+
+    local prune_cmd="docker system prune -a -f > /dev/null 2>&1"
+    if [[ "$AUTO_VOL" =~ ^[Yy]$ ]]; then
+        prune_cmd="docker system prune -a -f --volumes > /dev/null 2>&1"
+    fi
+
+    local cron_schedule
+    if [ "$cron_hours" -lt 24 ]; then
+        cron_schedule="0 */${cron_hours} * * *"
+    else
+        local days=$((cron_hours / 24))
+        if [ "$days" -le 1 ]; then
+            cron_schedule="0 0 * * *"
+        else
+            cron_schedule="0 0 */${days} * *"
+        fi
+    fi
+
+    local cron_entry="${cron_schedule} ${prune_cmd}"
+    (crontab -l 2>/dev/null; echo "$cron_entry") | crontab -
+
+    log_info "Auto cleanup terjadwal: setiap ${BOLD}${cron_hours} jam${NC}"
+    log_info "Cron: ${CYAN}${cron_entry}${NC}"
 }
 
 # ============================================================
