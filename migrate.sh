@@ -3,7 +3,7 @@
 # ============================================================
 #   Auto Script Migrasi Pterodactyl Panel
 #   GitHub  : https://github.com/SankaVollereii/Migrate-Pterodactyl
-#   Version : 2.2.0 — Fully Automated (Fixed)
+#   Version : 2.3.0 — Fully Automated + Volumes + SSL
 # ============================================================
 
 RED='\033[0;31m'
@@ -24,7 +24,7 @@ show_banner() {
     echo "  ███████║██║  ██║██║ ╚████║██║  ██╗██║  ██║"
     echo "  ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝"
     echo -e "${NC}"
-    echo -e "${BOLD}  Auto Script Migrasi Pterodactyl Panel v2.2.0${NC}"
+    echo -e "${BOLD}  Auto Script Migrasi Pterodactyl Panel v2.3.0${NC}"
     echo -e "  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }
@@ -43,72 +43,48 @@ exec > >(tee "$LOG_FILE") 2>&1
 
 validate_ip() {
     local ip="$1"
-    if [ -z "$ip" ]; then
-        log_error "IP tidak boleh kosong!"
-        return 1
-    fi
+    if [ -z "$ip" ]; then log_error "IP tidak boleh kosong!"; return 1; fi
     if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ ! "$ip" =~ ^[a-zA-Z0-9.-]+$ ]]; then
-        log_error "Format IP/hostname tidak valid: $ip"
-        return 1
+        log_error "Format IP/hostname tidak valid: $ip"; return 1
     fi
     return 0
 }
 
-cleanup_env() {
-    unset MYSQL_PWD MYSQL_ROOT_PASS DB_PASSWORD NEW_VPS_PASS 2>/dev/null || true
-}
+cleanup_env() { unset MYSQL_PWD MYSQL_ROOT_PASS DB_PASSWORD NEW_VPS_PASS 2>/dev/null || true; }
 
 START_TIME=0
 timer_start() { START_TIME=$(date +%s); }
 timer_show() {
     local end_time=$(date +%s)
     local elapsed=$((end_time - START_TIME))
-    local mins=$((elapsed / 60))
-    local secs=$((elapsed % 60))
-    if [ $mins -gt 0 ]; then
-        log_info "Waktu eksekusi: ${BOLD}${mins}m ${secs}s${NC}"
-    else
-        log_info "Waktu eksekusi: ${BOLD}${secs}s${NC}"
-    fi
+    local mins=$((elapsed / 60)) secs=$((elapsed % 60))
+    [ $mins -gt 0 ] && log_info "Waktu: ${BOLD}${mins}m ${secs}s${NC}" || log_info "Waktu: ${BOLD}${secs}s${NC}"
 }
 
 check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        log_error "Script ini harus dijalankan sebagai root!"
-        echo -e "  Gunakan: ${YELLOW}sudo bash migrate.sh${NC}"
-        exit 1
-    fi
+    [ "$EUID" -ne 0 ] && { log_error "Harus dijalankan sebagai root!"; exit 1; }
 }
 
 detect_os() {
     if command -v apt-get &>/dev/null; then
-        PKG_MANAGER="apt-get"
-        PKG_UPDATE="apt-get update -qq"
-        PKG_INSTALL="apt-get install -y -qq"
+        PKG_MANAGER="apt-get"; PKG_UPDATE="apt-get update -qq"; PKG_INSTALL="apt-get install -y -qq"
     elif command -v yum &>/dev/null; then
-        PKG_MANAGER="yum"
-        PKG_UPDATE="yum update -y -q"
-        PKG_INSTALL="yum install -y -q"
+        PKG_MANAGER="yum"; PKG_UPDATE="yum update -y -q"; PKG_INSTALL="yum install -y -q"
     else
-        log_error "Package manager tidak dikenali (bukan apt/yum)!"
-        exit 1
+        log_error "Package manager tidak dikenali!"; exit 1
     fi
 }
 
 ensure_pkg() {
-    local cmd="$1"
-    local pkg="$2"
+    local cmd="$1" pkg="$2"
     if ! command -v "$cmd" &>/dev/null; then
         log_info "Menginstall ${pkg}..."
-        $PKG_INSTALL "$pkg" > /dev/null 2>&1 && log_info "${pkg} berhasil diinstall." || {
-            log_error "Gagal install ${pkg}!"
-            exit 1
-        }
+        $PKG_INSTALL "$pkg" > /dev/null 2>&1 && log_info "${pkg} terinstall." || { log_error "Gagal install ${pkg}!"; exit 1; }
     fi
 }
 
 # ============================================================
-#   FIX: INSTALL / UPGRADE PHP KE 8.2+
+#   INSTALL / UPGRADE PHP KE 8.2+
 # ============================================================
 install_php() {
     local target_ver="8.2"
@@ -116,102 +92,69 @@ install_php() {
         local current_ver
         current_ver=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
         if awk "BEGIN{exit !($current_ver >= 8.2)}"; then
-            log_info "PHP ${current_ver} sudah >= 8.2, skip upgrade."
-            PHP_VER="$current_ver"
-            return 0
-        else
-            log_warn "PHP ${current_ver} terlalu lama, upgrade ke PHP ${target_ver}..."
+            log_info "PHP ${current_ver} sudah >= 8.2, skip."; PHP_VER="$current_ver"; return 0
         fi
+        log_warn "PHP ${current_ver} terlalu lama, upgrade ke ${target_ver}..."
     fi
 
     if [ "$PKG_MANAGER" = "apt-get" ]; then
         if ! apt-cache show "php${target_ver}" &>/dev/null 2>&1; then
             ensure_pkg "add-apt-repository" "software-properties-common"
-            add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1 \
-                || {
-                    ensure_pkg "curl" "curl"
-                    curl -sSL https://packages.sury.org/php/apt.gpg | apt-key add - > /dev/null 2>&1
-                    echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
-                        > /etc/apt/sources.list.d/php.list
-                }
+            add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1 || {
+                ensure_pkg "curl" "curl"
+                curl -sSL https://packages.sury.org/php/apt.gpg | apt-key add - > /dev/null 2>&1
+                echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
+            }
             $PKG_UPDATE > /dev/null 2>&1
         fi
-
-        log_info "Menginstall PHP ${target_ver} & ekstensi..."
-        $PKG_INSTALL \
-            "php${target_ver}" "php${target_ver}-cli" "php${target_ver}-fpm" \
+        $PKG_INSTALL "php${target_ver}" "php${target_ver}-cli" "php${target_ver}-fpm" \
             "php${target_ver}-mysql" "php${target_ver}-mbstring" "php${target_ver}-xml" \
             "php${target_ver}-bcmath" "php${target_ver}-curl" "php${target_ver}-zip" \
-            "php${target_ver}-gd" "php${target_ver}-common" "php${target_ver}-redis" \
-            > /dev/null 2>&1
-
-    elif [ "$PKG_MANAGER" = "yum" ]; then
-        ensure_pkg "curl" "curl"
-        yum install -y -q epel-release > /dev/null 2>&1
-        yum install -y -q https://rpms.remirepo.net/enterprise/remi-release-$(rpm -E %rhel).rpm > /dev/null 2>&1
-        yum module enable -y php:remi-8.2 > /dev/null 2>&1 || true
-        $PKG_INSTALL php php-cli php-fpm php-mysqlnd php-mbstring php-xml \
-            php-bcmath php-curl php-zip php-gd php-common php-redis > /dev/null 2>&1
+            "php${target_ver}-gd" "php${target_ver}-common" "php${target_ver}-redis" > /dev/null 2>&1
     fi
 
-    if command -v update-alternatives &>/dev/null; then
-        update-alternatives --set php /usr/bin/php${target_ver} > /dev/null 2>&1 || true
-    fi
-
+    command -v update-alternatives &>/dev/null && update-alternatives --set php /usr/bin/php${target_ver} > /dev/null 2>&1 || true
     systemctl enable "php${target_ver}-fpm" --quiet 2>/dev/null || true
     systemctl restart "php${target_ver}-fpm" 2>/dev/null || true
-
     PHP_VER="$target_ver"
-    log_info "PHP ${target_ver} berhasil diinstall & diset sebagai default."
+    log_info "PHP ${target_ver} terinstall."
 }
 
 # ============================================================
-#   FIX: INSTALL DOCKER
+#   INSTALL DOCKER
 # ============================================================
 install_docker() {
     if command -v docker &>/dev/null; then
-        log_info "Docker sudah ada ($(docker --version 2>&1 | head -1)), skip."
+        log_info "Docker sudah ada, skip."
         systemctl enable docker --quiet 2>/dev/null || true
         systemctl start docker 2>/dev/null || true
         return 0
     fi
-
     log_info "Menginstall Docker..."
     ensure_pkg "curl" "curl"
-
     curl -sSL https://get.docker.com | bash > /dev/null 2>&1
     systemctl enable docker --quiet 2>/dev/null
     systemctl start docker 2>/dev/null
-
-    if command -v docker &>/dev/null; then
-        log_info "Docker berhasil diinstall ($(docker --version 2>&1 | head -1))."
-    else
-        log_error "Gagal menginstall Docker!"
-        exit 1
-    fi
+    command -v docker &>/dev/null && log_info "Docker terinstall." || { log_error "Docker gagal!"; exit 1; }
 }
 
 # ============================================================
-#   FIX: INSTALL WINGS
+#   INSTALL WINGS
 # ============================================================
 install_wings() {
     log_step "Menginstall Pterodactyl Wings..."
-
-    # Pastikan Docker ada dulu
     install_docker
-
     mkdir -p /etc/pterodactyl
 
-    if [ -f "/usr/local/bin/wings" ]; then
-        log_info "Wings sudah ada, skip download."
-    else
+    if [ ! -f "/usr/local/bin/wings" ]; then
         log_info "Mendownload Wings..."
         ensure_pkg "curl" "curl"
         curl -L -o /usr/local/bin/wings \
-            "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64" \
-            > /dev/null 2>&1
+            "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_amd64" > /dev/null 2>&1
         chmod u+x /usr/local/bin/wings
-        log_info "Wings berhasil didownload."
+        log_info "Wings terdownload."
+    else
+        log_info "Wings sudah ada, skip download."
     fi
 
     local service_file="/etc/systemd/system/wings.service"
@@ -239,110 +182,143 @@ WantedBy=multi-user.target
 WINGSEOF
         systemctl daemon-reload 2>/dev/null
         systemctl enable wings --quiet 2>/dev/null
-        log_info "Wings service berhasil dibuat."
+        log_info "Wings service dibuat."
     else
         log_info "Wings service sudah ada."
     fi
 
     if [ ! -f "/etc/pterodactyl/config.yml" ]; then
-        log_warn "File /etc/pterodactyl/config.yml belum ada!"
-        log_warn "Masuk ke Panel → Admin → Nodes → Node kamu → Configuration"
-        log_warn "Copy config dan paste ke: /etc/pterodactyl/config.yml"
-        log_warn "Lalu jalankan: systemctl start wings"
+        log_warn "config.yml belum ada — masuk Panel → Admin → Nodes → Configuration → copy ke /etc/pterodactyl/config.yml"
     else
-        systemctl restart wings 2>/dev/null && log_info "Wings berhasil distart." \
-            || log_warn "Wings gagal start, cek: journalctl -u wings -n 30"
+        systemctl restart wings 2>/dev/null && log_info "Wings berjalan." || log_warn "Wings gagal, cek: journalctl -u wings -n 30"
     fi
 }
 
 # ============================================================
-#   INSTALL DEPENDENCIES DI VPS BARU
+#   SETUP SSL PANEL (Nginx)
+# ============================================================
+setup_ssl() {
+    local domain="$1" email="$2"
+    [ -z "$domain" ] || [ "$domain" = "_" ] && { log_warn "Domain tidak valid, skip SSL."; return; }
+
+    log_step "Setup SSL panel: ${domain}"
+    ! command -v certbot &>/dev/null && { detect_os; $PKG_INSTALL certbot python3-certbot-nginx > /dev/null 2>&1; }
+
+    if [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ]; then
+        log_info "SSL ${domain} sudah ada."; return 0
+    fi
+
+    if certbot --nginx -d "$domain" --non-interactive --agree-tos -m "$email" > /dev/null 2>&1; then
+        log_info "SSL panel ${domain} berhasil!"
+    else
+        log_warn "Nginx installer gagal, coba standalone..."
+        systemctl stop nginx 2>/dev/null || true
+        certbot certonly --standalone -d "$domain" --non-interactive --agree-tos -m "$email" > /dev/null 2>&1 \
+            && log_info "SSL certonly ${domain} berhasil!" \
+            || log_warn "SSL gagal, pasang manual nanti."
+        systemctl start nginx 2>/dev/null || true
+    fi
+
+    if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
+        (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --post-hook 'systemctl reload nginx' >> /var/log/certbot-renew.log 2>&1") | crontab -
+        log_info "Auto-renew SSL terjadwal jam 03:00 setiap hari."
+    fi
+}
+
+# ============================================================
+#   SETUP SSL WINGS/NODE (standalone)
+# ============================================================
+setup_ssl_wings() {
+    local node_domain="$1" email="$2"
+    [ -z "$node_domain" ] && { log_warn "Domain node kosong, skip."; return; }
+
+    log_step "Setup SSL Wings/Node: ${node_domain}"
+    ! command -v certbot &>/dev/null && { detect_os; $PKG_INSTALL certbot > /dev/null 2>&1; }
+
+    if [ -f "/etc/letsencrypt/live/${node_domain}/fullchain.pem" ]; then
+        log_info "SSL ${node_domain} sudah ada."; return 0
+    fi
+
+    log_info "Stop Wings & Nginx sementara..."
+    systemctl stop wings 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true
+
+    certbot certonly --standalone -d "$node_domain" --non-interactive --agree-tos -m "$email" > /dev/null 2>&1 \
+        && log_info "SSL Wings ${node_domain} berhasil!" \
+        || log_warn "SSL Wings gagal, cek DNS dulu."
+
+    systemctl start nginx 2>/dev/null || true
+    systemctl start wings 2>/dev/null || true
+
+    if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
+        (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --pre-hook 'systemctl stop wings' --post-hook 'systemctl start wings && systemctl reload nginx' >> /var/log/certbot-renew.log 2>&1") | crontab -
+        log_info "Auto-renew SSL Wings terjadwal jam 03:00."
+    fi
+}
+
+# ============================================================
+#   INSTALL DEPENDENCIES
 # ============================================================
 install_dependencies() {
-    log_step "Mengecek & menginstall semua dependencies..."
-
+    log_step "Mengecek & menginstall dependencies..."
     detect_os
     $PKG_UPDATE > /dev/null 2>&1
 
     if ! command -v nginx &>/dev/null; then
-        log_info "Menginstall Nginx..."
         $PKG_INSTALL nginx > /dev/null 2>&1
-        systemctl enable nginx --quiet 2>/dev/null
-        systemctl start nginx 2>/dev/null
+        systemctl enable nginx --quiet 2>/dev/null; systemctl start nginx 2>/dev/null
         log_info "Nginx terinstall."
-    else
-        log_info "Nginx sudah ada, skip."
-    fi
+    else log_info "Nginx sudah ada, skip."; fi
 
     if ! command -v mysql &>/dev/null; then
-        log_info "Menginstall MariaDB..."
         $PKG_INSTALL mariadb-server mariadb-client > /dev/null 2>&1
-        systemctl enable mariadb --quiet 2>/dev/null
-        systemctl start mariadb 2>/dev/null
+        systemctl enable mariadb --quiet 2>/dev/null; systemctl start mariadb 2>/dev/null
         log_info "MariaDB terinstall."
-    else
-        log_info "MariaDB sudah ada, skip."
-    fi
+    else log_info "MariaDB sudah ada, skip."; fi
 
     if ! command -v redis-cli &>/dev/null; then
-        log_info "Menginstall Redis..."
         $PKG_INSTALL redis-server > /dev/null 2>&1
-        systemctl enable redis-server --quiet 2>/dev/null
-        systemctl start redis-server 2>/dev/null
+        systemctl enable redis-server --quiet 2>/dev/null; systemctl start redis-server 2>/dev/null
         log_info "Redis terinstall."
-    else
-        log_info "Redis sudah ada, skip."
-    fi
+    else log_info "Redis sudah ada, skip."; fi
 
     install_php
+    install_docker
 
     if ! command -v composer &>/dev/null; then
-        log_info "Menginstall Composer..."
         ensure_pkg "curl" "curl"
         curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer > /dev/null 2>&1
         log_info "Composer terinstall."
-    else
-        log_info "Composer sudah ada ($(composer --version 2>&1 | head -1 | awk '{print $3}')), skip."
-    fi
-
-    install_docker
+    else log_info "Composer sudah ada, skip."; fi
 
     ensure_pkg "tar" "tar"
     ensure_pkg "unzip" "unzip"
+    ensure_pkg "sshpass" "sshpass"
 
     log_info "Semua dependencies siap."
 }
 
 # ============================================================
-#   FIX: SETUP NGINX — auto-detect PHP-FPM socket
+#   SETUP NGINX
 # ============================================================
 setup_nginx() {
-    log_step "Setup konfigurasi Nginx untuk Pterodactyl..."
+    log_step "Setup Nginx untuk Pterodactyl..."
 
     local php_ver
     php_ver=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
-
     local php_socket="/run/php/php${php_ver}-fpm.sock"
+
     if [ ! -S "$php_socket" ]; then
         local found_socket
-        found_socket=$(find /run/php/ -name "php*-fpm.sock" 2>/dev/null | head -1)
-        if [ -n "$found_socket" ]; then
-            php_socket="$found_socket"
-            log_info "PHP-FPM socket ditemukan: ${php_socket}"
-        else
-            log_warn "PHP-FPM socket tidak ditemukan, pastikan php-fpm berjalan!"
-        fi
+        found_socket=$(find /run/php/ -name "php*-fpm.sock" 2>/dev/null | grep -v "php7\|php8.0\|php8.1" | head -1)
+        [ -z "$found_socket" ] && found_socket=$(find /run/php/ -name "php*-fpm.sock" 2>/dev/null | head -1)
+        [ -n "$found_socket" ] && php_socket="$found_socket"
+        log_info "PHP-FPM socket: ${php_socket}"
     fi
 
     local nginx_conf
-    if [ -d "/etc/nginx/sites-available" ]; then
-        nginx_conf="/etc/nginx/sites-available/pterodactyl.conf"
-    elif [ -d "/etc/nginx/conf.d" ]; then
-        nginx_conf="/etc/nginx/conf.d/pterodactyl.conf"
-    else
-        mkdir -p /etc/nginx/conf.d
-        nginx_conf="/etc/nginx/conf.d/pterodactyl.conf"
-    fi
+    [ -d "/etc/nginx/sites-available" ] && nginx_conf="/etc/nginx/sites-available/pterodactyl.conf" \
+        || nginx_conf="/etc/nginx/conf.d/pterodactyl.conf"
 
     local domain
     domain=$(grep -w "^APP_URL" /var/www/pterodactyl/.env 2>/dev/null \
@@ -351,14 +327,13 @@ setup_nginx() {
 
     if [ -f "$nginx_conf" ]; then
         local current_socket
-        current_socket=$(grep "fastcgi_pass" "$nginx_conf" | grep -oP 'unix:[^;]+' | head -1)
-        if [ -n "$current_socket" ] && [ "$current_socket" != "unix:$php_socket" ]; then
-            log_info "Update PHP-FPM socket di Nginx: ${php_socket}"
-            sed -i "s|fastcgi_pass unix:.*|fastcgi_pass unix:${php_socket};|g" "$nginx_conf"
+        current_socket=$(grep "fastcgi_pass" "$nginx_conf" | grep -oP 'unix:[^;]+' | head -1 | sed 's/unix://')
+        if [ "$current_socket" != "$php_socket" ]; then
+            sed -i "s|fastcgi_pass unix:.*fpm.sock;|fastcgi_pass unix:${php_socket};|g" "$nginx_conf"
             nginx -t > /dev/null 2>&1 && systemctl reload nginx 2>/dev/null
-            log_info "Nginx config diperbarui."
+            log_info "Nginx socket diperbarui → ${php_socket}"
         else
-            log_info "Konfigurasi Nginx sudah ada & up-to-date, skip."
+            log_info "Nginx sudah up-to-date, skip."
         fi
         return
     fi
@@ -372,16 +347,12 @@ server {
     index index.html index.htm index.php;
     charset utf-8;
 
-    location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
-
+    location / { try_files \$uri \$uri/ /index.php?\$query_string; }
     location = /favicon.ico { access_log off; log_not_found off; }
     location = /robots.txt  { access_log off; log_not_found off; }
 
     access_log off;
     error_log  /var/log/nginx/pterodactyl.app-error.log error;
-
     client_max_body_size 100m;
     client_body_timeout 120s;
     sendfile off;
@@ -402,18 +373,16 @@ server {
         fastcgi_read_timeout 300;
     }
 
-    location ~ /\.ht {
-        deny all;
-    }
+    location ~ /\.ht { deny all; }
 }
 NGINXEOF
 
-    if [ -d "/etc/nginx/sites-enabled" ]; then
+    [ -d "/etc/nginx/sites-enabled" ] && {
         ln -sf "$nginx_conf" /etc/nginx/sites-enabled/pterodactyl.conf 2>/dev/null
         rm -f /etc/nginx/sites-enabled/default 2>/dev/null
-    fi
+    }
     nginx -t > /dev/null 2>&1 && systemctl reload nginx 2>/dev/null
-    log_info "Konfigurasi Nginx dibuat untuk domain: ${domain}"
+    log_info "Nginx config dibuat untuk: ${domain}"
 }
 
 # ============================================================
@@ -422,13 +391,10 @@ NGINXEOF
 setup_cron_and_worker() {
     log_step "Setup Cronjob & Queue Worker..."
 
-    local cron_entry="* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1"
     if ! crontab -l 2>/dev/null | grep -q "pterodactyl/artisan schedule:run"; then
-        (crontab -l 2>/dev/null; echo "$cron_entry") | crontab -
-        log_info "Cronjob berhasil ditambahkan."
-    else
-        log_info "Cronjob sudah ada, skip."
-    fi
+        (crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
+        log_info "Cronjob ditambahkan."
+    else log_info "Cronjob sudah ada, skip."; fi
 
     local service_file="/etc/systemd/system/pteroq.service"
     if [ ! -f "$service_file" ]; then
@@ -452,210 +418,159 @@ SVCEOF
         systemctl daemon-reload 2>/dev/null
         systemctl enable pteroq --quiet 2>/dev/null
         systemctl start pteroq 2>/dev/null
-        log_info "Queue Worker (pteroq) berhasil disetup & dijalankan."
+        log_info "Queue Worker (pteroq) disetup & dijalankan."
     else
         systemctl restart pteroq 2>/dev/null
-        log_info "Queue Worker (pteroq) di-restart."
+        log_info "Queue Worker di-restart."
     fi
 }
 
 # ============================================================
-#   OPSI 1: BACKUP DATA + KIRIM KE VPS BARU
+#   OPSI 1: BACKUP + STREAM KE VPS BARU
 # ============================================================
 run_backup() {
     log_section
-    log_step "Memulai proses BACKUP di VPS Lama..."
+    log_step "BACKUP di VPS Lama..."
     log_section
 
     detect_os
     ensure_pkg "sshpass" "sshpass"
 
-    if [ ! -d "/var/www/pterodactyl" ]; then
-        log_error "Folder /var/www/pterodactyl tidak ditemukan!"
-        log_warn "Pastikan kamu menjalankan script ini di VPS yang benar (VPS LAMA)."
-        exit 1
-    fi
+    [ ! -d "/var/www/pterodactyl" ] && { log_error "/var/www/pterodactyl tidak ditemukan!"; exit 1; }
+    cd /var/www/pterodactyl || exit 1
 
-    cd /var/www/pterodactyl || { log_error "Gagal masuk ke /var/www/pterodactyl!"; exit 1; }
-
-    log_step "Masukkan informasi VPS Baru untuk transfer otomatis..."
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} IP VPS Baru: ${NC}"
-    read -r NEW_VPS_IP
+    log_step "Informasi VPS Baru..."
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} IP VPS Baru: ${NC}"; read -r NEW_VPS_IP
     validate_ip "$NEW_VPS_IP" || exit 1
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Port SSH VPS Baru [22]: ${NC}"
-    read -r NEW_VPS_PORT
-    NEW_VPS_PORT=${NEW_VPS_PORT:-22}
-    if ! [[ "$NEW_VPS_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_VPS_PORT" -lt 1 ] || [ "$NEW_VPS_PORT" -gt 65535 ]; then
-        log_error "Port SSH tidak valid: $NEW_VPS_PORT (harus 1-65535)"
-        exit 1
-    fi
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Username SSH VPS Baru [root]: ${NC}"
-    read -r NEW_VPS_USER
-    NEW_VPS_USER=${NEW_VPS_USER:-root}
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Password SSH VPS Baru: ${NC}"
-    read -s NEW_VPS_PASS
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Port SSH [22]: ${NC}"; read -r NEW_VPS_PORT; NEW_VPS_PORT=${NEW_VPS_PORT:-22}
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Username [root]: ${NC}"; read -r NEW_VPS_USER; NEW_VPS_USER=${NEW_VPS_USER:-root}
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Password SSH: ${NC}"; read -s NEW_VPS_PASS; echo ""
+    [ -z "$NEW_VPS_PASS" ] && { log_error "Password kosong!"; exit 1; }
+
     echo ""
-    if [ -z "$NEW_VPS_PASS" ]; then
-        log_error "Password SSH tidak boleh kosong!"
-        exit 1
-    fi
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Backup juga file server (volumes Docker)? [Y/n]: ${NC}"
+    read -r BACKUP_VOLUMES; BACKUP_VOLUMES=${BACKUP_VOLUMES:-Y}
 
-    log_step "Menguji koneksi SSH ke VPS Baru (${NEW_VPS_IP})..."
-    if ! sshpass -p "$NEW_VPS_PASS" ssh \
-        -o StrictHostKeyChecking=no \
-        -o ConnectTimeout=10 \
-        -p "$NEW_VPS_PORT" \
-        "${NEW_VPS_USER}@${NEW_VPS_IP}" "echo ok" &>/dev/null; then
-        log_error "Tidak bisa terhubung ke VPS Baru! Periksa IP, port, username, dan password."
-        exit 1
-    fi
-    log_info "Koneksi SSH ke VPS Baru berhasil."
+    log_step "Test koneksi SSH..."
+    sshpass -p "$NEW_VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p "$NEW_VPS_PORT" "${NEW_VPS_USER}@${NEW_VPS_IP}" "echo ok" &>/dev/null \
+        || { log_error "Tidak bisa terhubung ke VPS Baru!"; exit 1; }
+    log_info "Koneksi SSH OK."
 
-    log_step "Mengaktifkan maintenance mode..."
-    php artisan down --quiet 2>/dev/null \
-        && log_info "Maintenance mode aktif." \
-        || log_warn "Gagal maintenance mode, lanjut..."
+    php artisan down --quiet 2>/dev/null && log_info "Maintenance mode aktif." || log_warn "Lanjut..."
 
-    log_step "Membaca konfigurasi dari .env..."
-    if [ ! -f ".env" ]; then
-        log_error "File .env tidak ditemukan!"
-        php artisan up --quiet 2>/dev/null
-        exit 1
-    fi
+    [ ! -f ".env" ] && { log_error ".env tidak ditemukan!"; php artisan up --quiet 2>/dev/null; exit 1; }
 
     DB_HOST=$(grep -w "^DB_HOST" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
-    DB_PORT=$(grep -w "^DB_PORT" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
+    DB_PORT=$(grep -w "^DB_PORT" .env | cut -d '=' -f2- | tr -d ' \r"'"'"); DB_PORT=${DB_PORT:-3306}
     DB_DATABASE=$(grep -w "^DB_DATABASE" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
     DB_USERNAME=$(grep -w "^DB_USERNAME" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
     DB_PASSWORD=$(grep -w "^DB_PASSWORD" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
-    DB_PORT=${DB_PORT:-3306}
 
-    log_info "Database : ${DB_DATABASE} | Host: ${DB_HOST}:${DB_PORT}"
+    log_step "Backup database..."
+    MYSQL_PWD="$DB_PASSWORD" mysqldump -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" \
+        "$DB_DATABASE" > /root/panel_db_backup.sql 2>/dev/null \
+        && log_info "DB backup: $(du -sh /root/panel_db_backup.sql | cut -f1)" \
+        || { log_error "Gagal backup DB!"; php artisan up --quiet 2>/dev/null; exit 1; }
 
-    log_step "Mem-backup database '${DB_DATABASE}'..."
-    if MYSQL_PWD="$DB_PASSWORD" mysqldump -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USERNAME" \
-        "$DB_DATABASE" > /root/panel_db_backup.sql 2>/dev/null; then
-        local db_size
-        db_size=$(du -sh /root/panel_db_backup.sql | cut -f1)
-        log_info "Database berhasil di-backup! (${db_size})"
+    log_step "Backup panel files..."
+    tar -czf /root/panel_files_backup.tar.gz /var/www/pterodactyl 2>/dev/null \
+        && log_info "Panel files: $(du -sh /root/panel_files_backup.tar.gz | cut -f1)" \
+        || { log_error "Gagal backup files!"; php artisan up --quiet 2>/dev/null; exit 1; }
+
+    php artisan up --quiet 2>/dev/null; log_info "Maintenance mode off."
+
+    log_step "Kirim DB backup..."
+    sshpass -p "$NEW_VPS_PASS" scp -o StrictHostKeyChecking=no -o ServerAliveInterval=60 \
+        -P "$NEW_VPS_PORT" /root/panel_db_backup.sql "${NEW_VPS_USER}@${NEW_VPS_IP}:/root/" \
+        && log_info "DB backup terkirim." || { log_error "Gagal kirim DB!"; cleanup_env; exit 1; }
+
+    log_step "Kirim panel files..."
+    sshpass -p "$NEW_VPS_PASS" scp -o StrictHostKeyChecking=no -o ServerAliveInterval=60 \
+        -P "$NEW_VPS_PORT" /root/panel_files_backup.tar.gz "${NEW_VPS_USER}@${NEW_VPS_IP}:/root/" \
+        && log_info "Panel files terkirim." || { log_error "Gagal kirim files!"; cleanup_env; exit 1; }
+
+    if [[ "$BACKUP_VOLUMES" =~ ^[Yy]$ ]]; then
+        if [ -d "/var/lib/pterodactyl/volumes" ] && [ "$(ls -A /var/lib/pterodactyl/volumes 2>/dev/null)" ]; then
+            log_step "Stream volumes ke VPS Baru (langsung, hemat storage)..."
+            log_warn "Ukuran: $(du -sh /var/lib/pterodactyl/volumes/ 2>/dev/null | cut -f1) — proses bisa lama."
+
+            local wings_was_running=false
+            systemctl is-active --quiet wings 2>/dev/null && wings_was_running=true
+            [ "$wings_was_running" = true ] && systemctl stop wings 2>/dev/null && log_info "Wings dihentikan sementara."
+
+            if tar -czf - /var/lib/pterodactyl/volumes/ 2>/dev/null | \
+                sshpass -p "$NEW_VPS_PASS" ssh \
+                    -o StrictHostKeyChecking=no \
+                    -o ServerAliveInterval=60 \
+                    -o ServerAliveCountMax=10 \
+                    -p "$NEW_VPS_PORT" \
+                    "${NEW_VPS_USER}@${NEW_VPS_IP}" \
+                    "mkdir -p /var/lib/pterodactyl && tar -xzf - -C /"; then
+                log_info "Volumes berhasil di-stream ke VPS Baru!"
+                log_info "Jalankan di VPS Baru: chown -R root:root /var/lib/pterodactyl/volumes/"
+            else
+                log_warn "Stream volumes gagal/sebagian. Cek manual di VPS baru."
+            fi
+
+            [ "$wings_was_running" = true ] && systemctl start wings 2>/dev/null && log_info "Wings dijalankan kembali."
+        else
+            log_warn "Folder volumes kosong, skip."
+        fi
     else
-        log_error "Gagal backup database!"
-        php artisan up --quiet 2>/dev/null
-        exit 1
-    fi
-
-    log_step "Mem-backup folder /var/www/pterodactyl..."
-    if tar -czf /root/panel_files_backup.tar.gz /var/www/pterodactyl 2>/dev/null; then
-        local files_size
-        files_size=$(du -sh /root/panel_files_backup.tar.gz | cut -f1)
-        log_info "File panel berhasil di-backup! (${files_size})"
-    else
-        log_error "Gagal membuat tar backup!"
-        php artisan up --quiet 2>/dev/null
-        exit 1
-    fi
-
-    php artisan up --quiet 2>/dev/null
-    log_info "Maintenance mode dinonaktifkan."
-
-    log_step "Mengirim file backup ke VPS Baru (${NEW_VPS_IP})..."
-
-    log_info "Mengirim panel_db_backup.sql..."
-    if sshpass -p "$NEW_VPS_PASS" scp \
-        -o StrictHostKeyChecking=no \
-        -o ServerAliveInterval=60 \
-        -P "$NEW_VPS_PORT" \
-        /root/panel_db_backup.sql \
-        "${NEW_VPS_USER}@${NEW_VPS_IP}:/root/"; then
-        log_info "panel_db_backup.sql berhasil dikirim."
-    else
-        log_error "Gagal mengirim panel_db_backup.sql!"
-        cleanup_env
-        exit 1
-    fi
-
-    log_info "Mengirim panel_files_backup.tar.gz (mungkin memakan waktu)..."
-    if sshpass -p "$NEW_VPS_PASS" scp \
-        -o StrictHostKeyChecking=no \
-        -o ServerAliveInterval=60 \
-        -P "$NEW_VPS_PORT" \
-        /root/panel_files_backup.tar.gz \
-        "${NEW_VPS_USER}@${NEW_VPS_IP}:/root/"; then
-        log_info "panel_files_backup.tar.gz berhasil dikirim."
-    else
-        log_error "Gagal mengirim panel_files_backup.tar.gz!"
-        cleanup_env
-        exit 1
+        log_warn "Skip backup volumes (pilihan user)."
     fi
 
     cleanup_env
-
     log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  BACKUP & TRANSFER SELESAI!${NC}\n"
-    echo -e "  File backup sudah terkirim ke VPS Baru ${CYAN}(${NEW_VPS_IP})${NC}."
-    echo -e "\n  ${BOLD}Sekarang jalankan script ini di VPS Baru dan pilih ${GREEN}[2] RESTORE${NC}.\n"
+    echo -e "\n  ${GREEN}${BOLD}✅  BACKUP & TRANSFER SELESAI!${NC}"
+    echo -e "  Sekarang jalankan script di VPS Baru → pilih ${GREEN}[2] RESTORE${NC}.\n"
     log_section
 }
 
 # ============================================================
-#   OPSI 2: RESTORE + AUTO INSTALL & SETUP DI VPS BARU
+#   OPSI 2: RESTORE
 # ============================================================
 run_restore() {
     log_section
-    log_step "Memulai proses RESTORE di VPS Baru..."
+    log_step "RESTORE di VPS Baru..."
     log_section
 
-    log_step "Memeriksa file backup..."
     local missing_files=()
     [ ! -f "/root/panel_files_backup.tar.gz" ] && missing_files+=("panel_files_backup.tar.gz")
     [ ! -f "/root/panel_db_backup.sql" ]       && missing_files+=("panel_db_backup.sql")
-
     if [ ${#missing_files[@]} -gt 0 ]; then
-        log_error "File backup tidak ditemukan di /root/:"
-        for f in "${missing_files[@]}"; do
-            echo -e "    ${RED}✗${NC} $f"
-        done
-        log_warn "Pastikan sudah menjalankan opsi BACKUP di VPS lama terlebih dahulu."
+        log_error "File backup tidak ditemukan:"
+        for f in "${missing_files[@]}"; do echo -e "    ${RED}✗${NC} $f"; done
         exit 1
     fi
-    log_info "Semua file backup ditemukan."
+    log_info "File backup ditemukan."
 
     install_dependencies
 
     log_step "Setup Database..."
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Masukkan password ROOT MySQL di VPS BARU ini: ${NC}"
-    read -s MYSQL_ROOT_PASS
-    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Password ROOT MySQL: ${NC}"; read -s MYSQL_ROOT_PASS; echo ""
+
+    mysql_cmd() {
+        [ -z "$MYSQL_ROOT_PASS" ] && mysql -u root "$@" || MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root "$@"
+    }
 
     if ! MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root -e "SELECT 1;" &>/dev/null; then
         if mysql -u root -e "SELECT 1;" &>/dev/null; then
-            log_warn "MySQL menggunakan unix_socket auth, password diabaikan."
-            MYSQL_ROOT_PASS=""
+            log_warn "MySQL unix_socket auth."; MYSQL_ROOT_PASS=""
         else
-            log_error "Password MySQL root salah atau MySQL tidak berjalan!"
-            exit 1
+            log_error "Password MySQL salah!"; exit 1
         fi
     fi
-    log_info "Koneksi MySQL OK."
+    log_info "MySQL OK."
 
-    log_step "Mengekstrak file panel ke /var/www/pterodactyl..."
+    log_step "Ekstrak panel files..."
     mkdir -p /var/www/pterodactyl
-    if tar -xzf /root/panel_files_backup.tar.gz -C / > /dev/null 2>&1; then
-        log_info "File panel berhasil diekstrak."
-    else
-        log_error "Gagal mengekstrak file backup!"
-        exit 1
-    fi
+    tar -xzf /root/panel_files_backup.tar.gz -C / > /dev/null 2>&1 \
+        && log_info "Files diekstrak." || { log_error "Gagal ekstrak!"; exit 1; }
 
-    cd /var/www/pterodactyl || { log_error "Gagal masuk ke /var/www/pterodactyl!"; exit 1; }
-    if [ ! -f ".env" ]; then
-        log_error "File .env tidak ditemukan setelah ekstrak!"
-        exit 1
-    fi
-
-    DB_DATABASE=$(grep -w "^DB_DATABASE" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
-    DB_USERNAME=$(grep -w "^DB_USERNAME" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
-    DB_PASSWORD=$(grep -w "^DB_PASSWORD" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
+    cd /var/www/pterodactyl || exit 1
+    [ ! -f ".env" ] && { log_error ".env tidak ditemukan!"; exit 1; }
 
     local app_url_raw
     app_url_raw=$(grep -w "^APP_URL" .env | cut -d '=' -f2- | tr -d ' \r')
@@ -663,852 +578,354 @@ run_restore() {
         local app_url_clean
         app_url_clean=$(echo "$app_url_raw" | tr -d '"'"'")
         sed -i "s|^APP_URL=.*|APP_URL=${app_url_clean}|" .env
-        log_info "APP_URL diperbaiki (tanda kutip dihapus): ${app_url_clean}"
+        log_info "APP_URL diperbaiki: ${app_url_clean}"
     fi
 
-    log_info "Database target: ${DB_DATABASE}"
+    DB_DATABASE=$(grep -w "^DB_DATABASE" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
+    DB_USERNAME=$(grep -w "^DB_USERNAME" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
+    DB_PASSWORD=$(grep -w "^DB_PASSWORD" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
 
-    mysql_cmd() {
-        if [ -z "$MYSQL_ROOT_PASS" ]; then
-            mysql -u root "$@"
-        else
-            MYSQL_PWD="$MYSQL_ROOT_PASS" mysql -u root "$@"
-        fi
-    }
-
-    log_info "Membuat database '${DB_DATABASE}'..."
     mysql_cmd -e "CREATE DATABASE IF NOT EXISTS \`$DB_DATABASE\`;" 2>/dev/null
-
-    log_info "Merestore database dari backup..."
-    if mysql_cmd "$DB_DATABASE" < /root/panel_db_backup.sql 2>/dev/null; then
-        log_info "Database berhasil direstore!"
-    else
-        log_error "Gagal merestore database!"
-        exit 1
-    fi
-
-    log_info "Membuat user database '${DB_USERNAME}'..."
+    mysql_cmd "$DB_DATABASE" < /root/panel_db_backup.sql 2>/dev/null \
+        && log_info "Database direstore!" || { log_error "Gagal restore DB!"; exit 1; }
     mysql_cmd -e "
         CREATE USER IF NOT EXISTS '${DB_USERNAME}'@'127.0.0.1' IDENTIFIED BY '${DB_PASSWORD}';
         GRANT ALL PRIVILEGES ON \`${DB_DATABASE}\`.* TO '${DB_USERNAME}'@'127.0.0.1' WITH GRANT OPTION;
         FLUSH PRIVILEGES;
-    " 2>/dev/null \
-        && log_info "User database OK." \
-        || log_warn "User DB mungkin sudah ada, lanjut..."
+    " 2>/dev/null && log_info "User DB OK." || log_warn "User DB mungkin sudah ada."
 
-    log_step "Memperbarui permissions dan dependencies..."
+    log_step "Permissions & Composer..."
     find storage bootstrap/cache -type d -exec chmod 755 {} \; 2>/dev/null
     find storage bootstrap/cache -type f -exec chmod 644 {} \; 2>/dev/null
     chown -R www-data:www-data /var/www/pterodactyl
-    log_info "Permissions diperbarui."
 
     export COMPOSER_ALLOW_SUPERUSER=1
-    log_info "Menjalankan composer install..."
     if ! composer install --no-dev --optimize-autoloader --quiet 2>/dev/null; then
-        log_error "Composer install GAGAL! Cek error di bawah:"
+        log_error "Composer GAGAL:"
         composer install --no-dev --optimize-autoloader 2>&1 | tail -20
-        log_error "Restore dibatalkan karena composer gagal."
         exit 1
     fi
-    log_info "Composer install selesai."
+    log_info "Composer selesai."
 
-    log_step "Membersihkan cache dan mengaktifkan panel..."
-    php artisan view:clear   --quiet 2>/dev/null && log_info "View cache dibersihkan."
-    php artisan config:clear --quiet 2>/dev/null && log_info "Config cache dibersihkan."
-    php artisan cache:clear  --quiet 2>/dev/null && log_info "App cache dibersihkan."
-    php artisan migrate --force --quiet 2>/dev/null && log_info "Migrasi database dijalankan."
-    php artisan up           --quiet 2>/dev/null && log_info "Panel diaktifkan."
+    log_step "Clear cache & aktifkan panel..."
+    systemctl restart redis-server 2>/dev/null || true
+    php artisan view:clear   --quiet 2>/dev/null && log_info "View cache clear."
+    php artisan config:clear --quiet 2>/dev/null && log_info "Config cache clear."
+    php artisan cache:clear  --quiet 2>/dev/null && log_info "App cache clear."
+    php artisan migrate --force --quiet 2>/dev/null && log_info "Migrasi DB selesai."
+    php artisan up --quiet 2>/dev/null && log_info "Panel aktif."
 
     setup_nginx
     setup_cron_and_worker
-
     install_wings
 
-    log_step "Memastikan semua service berjalan..."
     systemctl restart nginx        2>/dev/null && log_info "Nginx berjalan."
     systemctl restart mariadb      2>/dev/null && log_info "MariaDB berjalan."
     systemctl restart redis-server 2>/dev/null && log_info "Redis berjalan."
     systemctl restart docker       2>/dev/null && log_info "Docker berjalan."
 
     local vps_ip
-    vps_ip=$(curl -s --connect-timeout 5 --max-time 10 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    vps_ip=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
     local app_url
-    app_url=$(grep -w "^APP_URL" .env 2>/dev/null | cut -d '=' -f2- | tr -d ' \r"'"'")
-    local domain
-    domain=$(echo "$app_url" | sed 's|https\?://||')
+    app_url=$(grep -w "^APP_URL" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
+    local domain; domain=$(echo "$app_url" | sed 's|https\?://||')
 
     echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} APP_URL saat ini: ${CYAN}${app_url}${NC}\n"
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Apakah ingin mengubah APP_URL? [y/N]: ${NC}"
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} APP_URL: ${CYAN}${app_url}${NC} — Ubah? [y/N]: ${NC}"
     read -r CHANGE_URL
     if [[ "$CHANGE_URL" =~ ^[Yy]$ ]]; then
-        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Masukkan APP_URL baru (contoh: https://panel.domain.com): ${NC}"
-        read -r NEW_APP_URL
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} APP_URL baru: ${NC}"; read -r NEW_APP_URL
         if [ -n "$NEW_APP_URL" ]; then
             sed -i "s|^APP_URL=.*|APP_URL=${NEW_APP_URL}|" .env
-            app_url="$NEW_APP_URL"
-            domain=$(echo "$app_url" | sed 's|https\?://||')
+            app_url="$NEW_APP_URL"; domain=$(echo "$app_url" | sed 's|https\?://||')
             php artisan config:clear --quiet 2>/dev/null
-            log_info "APP_URL diperbarui ke: ${NEW_APP_URL}"
+            log_info "APP_URL → ${NEW_APP_URL}"
         fi
     fi
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Pasang SSL panel (${domain})? [Y/n]: ${NC}"
+    read -r DO_SSL; DO_SSL=${DO_SSL:-Y}
+    local SSL_EMAIL=""
+    if [[ "$DO_SSL" =~ ^[Yy]$ ]]; then
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Email SSL: ${NC}"; read -r SSL_EMAIL
+        [ -n "$SSL_EMAIL" ] && setup_ssl "$domain" "$SSL_EMAIL"
+    fi
+
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Pasang SSL Wings/Node? [Y/n]: ${NC}"
+    read -r DO_SSL_WINGS; DO_SSL_WINGS=${DO_SSL_WINGS:-Y}
+    if [[ "$DO_SSL_WINGS" =~ ^[Yy]$ ]]; then
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Domain node (contoh: node.domain.com): ${NC}"; read -r NODE_DOMAIN
+        if [ -n "$NODE_DOMAIN" ]; then
+            local node_email="${SSL_EMAIL}"
+            [ -z "$node_email" ] && { echo -ne "  ${YELLOW}[?]${NC}${BOLD} Email SSL node: ${NC}"; read -r node_email; }
+            setup_ssl_wings "$NODE_DOMAIN" "$node_email"
+        fi
+    fi
+
+    [ -f "/etc/pterodactyl/config.yml" ] && systemctl restart wings 2>/dev/null && log_info "Wings berjalan."
 
     cleanup_env
-
     log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  RESTORE SELESAI! PANEL SIAP PAKAI! 🚀${NC}\n"
-    echo -e "  ${BOLD}Info VPS Baru:${NC}"
-    echo -e "  ${YELLOW}  ▸${NC} IP VPS Baru  : ${CYAN}${vps_ip}${NC}"
-    echo -e "  ${YELLOW}  ▸${NC} Domain Panel : ${CYAN}${domain}${NC}"
-    echo -e "\n  ${BOLD}Yang perlu kamu lakukan HANYA 1:${NC}"
-    echo -e "  ${YELLOW}  ▸${NC} Arahkan ${BOLD}A Record DNS/Cloudflare${NC} domain ${CYAN}${domain}${NC}"
-    echo -e "    ke IP ${CYAN}${vps_ip}${NC}"
-    echo -e "\n  ${BOLD}(Opsional) Pasang SSL:${NC}"
-    echo -e "  ${CYAN}  apt install certbot python3-certbot-nginx -y${NC}"
-    echo -e "  ${CYAN}  certbot --nginx -d ${domain}${NC}"
-    echo -e "\n  ${BOLD}⚠️  Wings:${NC} Pastikan config node sudah ada di ${CYAN}/etc/pterodactyl/config.yml${NC}"
-    echo -e "  Masuk Panel → Admin → Nodes → Node → Configuration → Copy & paste ke file tersebut"
-    echo -e "  Lalu: ${CYAN}systemctl start wings${NC}\n"
-    echo -e "  ${BOLD}Log tersimpan di:${NC} ${CYAN}${LOG_FILE}${NC}\n"
-    echo -e "  Nginx, MariaDB, Redis, Docker, Cronjob & Worker sudah jalan otomatis. ✅\n"
+    echo -e "\n  ${GREEN}${BOLD}✅  RESTORE SELESAI! 🚀${NC}\n"
+    echo -e "  ${YELLOW}▸${NC} IP VPS   : ${CYAN}${vps_ip}${NC}"
+    echo -e "  ${YELLOW}▸${NC} Panel    : ${CYAN}${app_url}${NC}"
+    echo -e "\n  ${BOLD}⚠️  Wings:${NC} Panel → Admin → Nodes → Configuration"
+    echo -e "  Copy config → ${CYAN}/etc/pterodactyl/config.yml${NC} → ${CYAN}systemctl restart wings${NC}\n"
+    echo -e "  Log: ${CYAN}${LOG_FILE}${NC}\n"
     log_section
 }
 
 # ============================================================
-#   OPSI 3: HAPUS BACKUP DI VPS LAMA
+#   OPSI 3: CLEANUP
 # ============================================================
 run_cleanup() {
-    log_section
-    log_step "Memeriksa file backup di VPS ini..."
-    log_section
+    log_section; log_step "Cleanup file backup..."; log_section
 
-    local files=(
-        "/root/panel_db_backup.sql"
-        "/root/panel_files_backup.tar.gz"
-    )
+    local files=("/root/panel_db_backup.sql" "/root/panel_files_backup.tar.gz" "/root/pterodactyl_volumes_backup.tar.gz")
     local found=()
-
     for f in "${files[@]}"; do
-        if [ -f "$f" ]; then
-            local size
-            size=$(du -sh "$f" | cut -f1)
-            found+=("$f")
-            log_info "Ditemukan: ${YELLOW}$f${NC} (${size})"
-        fi
+        [ -f "$f" ] && { found+=("$f"); log_info "Ditemukan: ${YELLOW}$f${NC} ($(du -sh "$f" | cut -f1))"; }
     done
 
-    if [ ${#found[@]} -eq 0 ]; then
-        log_warn "Tidak ada file backup yang ditemukan di /root/."
-        log_warn "Mungkin sudah dihapus atau belum pernah dibuat."
-        return
-    fi
+    [ ${#found[@]} -eq 0 ] && { log_warn "Tidak ada file backup."; return; }
 
-    echo ""
-    echo -ne "  ${RED}[?]${NC}${BOLD} Yakin ingin menghapus ${#found[@]} file backup di atas? [y/N]: ${NC}"
-    read -r CONFIRM
-
-    if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
-        log_step "Menghapus file backup..."
-        for f in "${found[@]}"; do
-            rm -f "$f" && log_info "Dihapus: $f" || log_error "Gagal menghapus: $f"
-        done
-        log_section
-        echo -e "\n  ${GREEN}${BOLD}🗑️   CLEANUP SELESAI!${NC}"
-        echo -e "  Semua file backup telah dihapus dari VPS ini.\n"
-        log_section
-    else
-        echo ""
-        log_warn "Dibatalkan. Tidak ada file yang dihapus."
-    fi
+    echo -ne "\n  ${RED}[?]${NC}${BOLD} Hapus ${#found[@]} file? [y/N]: ${NC}"; read -r CONFIRM
+    [[ "$CONFIRM" =~ ^[Yy]$ ]] && {
+        for f in "${found[@]}"; do rm -f "$f" && log_info "Dihapus: $f"; done
+        echo -e "\n  ${GREEN}${BOLD}🗑️  CLEANUP SELESAI!${NC}\n"
+    } || log_warn "Dibatalkan."
 }
 
 # ============================================================
-#   OPSI 4: MIGRASI DOMAIN PANEL
+#   OPSI 4: MIGRASI DOMAIN
 # ============================================================
 run_migrate_domain() {
-    log_section
-    log_step "Migrasi Domain Panel Pterodactyl"
-    log_section
+    log_section; log_step "Migrasi Domain Panel"; log_section
 
-    if [ ! -d "/var/www/pterodactyl" ]; then
-        log_error "Folder /var/www/pterodactyl tidak ditemukan!"
-        log_warn "Pastikan panel sudah terinstall."
-        return
-    fi
-
-    cd /var/www/pterodactyl || { log_error "Gagal masuk ke /var/www/pterodactyl!"; return; }
-
-    if [ ! -f ".env" ]; then
-        log_error "File .env tidak ditemukan!"
-        return
-    fi
+    [ ! -d "/var/www/pterodactyl" ] && { log_error "Panel tidak ditemukan!"; return; }
+    cd /var/www/pterodactyl || return
+    [ ! -f ".env" ] && { log_error ".env tidak ditemukan!"; return; }
 
     local current_url
-    current_url=$(grep -w "^APP_URL" .env | cut -d '=' -f2- | tr -d ' \r"'"'" || true)
-    local current_domain
-    current_domain=$(echo "$current_url" | sed 's|https\?://||' || true)
-
-    log_info "Domain saat ini: ${BOLD}${current_domain}${NC}"
+    current_url=$(grep -w "^APP_URL" .env | cut -d '=' -f2- | tr -d ' \r"'"'")
     log_info "APP_URL saat ini: ${BOLD}${current_url}${NC}"
 
-    echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Masukkan domain baru (contoh: panel.domain.com): ${NC}"
-    read -r NEW_DOMAIN
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Domain baru: ${NC}"; read -r NEW_DOMAIN
+    [ -z "$NEW_DOMAIN" ] && { log_error "Domain kosong!"; return; }
 
-    if [ -z "$NEW_DOMAIN" ]; then
-        log_error "Domain tidak boleh kosong!"
-        return
-    fi
-
-    echo -e "  ${BOLD}Pilih protokol:${NC}"
-    echo -e "  ${GREEN}[1]${NC} https:// (recommended)"
-    echo -e "  ${GREEN}[2]${NC} http://"
-    echo -ne "  ${BOLD}Pilih [1/2]: ${NC}"
-    read -r PROTO_CHOICE
-
+    echo -e "  ${GREEN}[1]${NC} https://  ${GREEN}[2]${NC} http://"
+    echo -ne "  ${BOLD}Pilih [1/2]: ${NC}"; read -r PROTO_CHOICE
     local new_url
-    case "$PROTO_CHOICE" in
-        1) new_url="https://${NEW_DOMAIN}" ;;
-        2) new_url="http://${NEW_DOMAIN}" ;;
-        *) new_url="https://${NEW_DOMAIN}" ;;
-    esac
+    [ "$PROTO_CHOICE" = "2" ] && new_url="http://${NEW_DOMAIN}" || new_url="https://${NEW_DOMAIN}"
 
-    echo ""
-    log_info "Domain baru : ${BOLD}${NEW_DOMAIN}${NC}"
-    log_info "APP_URL baru: ${BOLD}${new_url}${NC}"
-    echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Lanjutkan migrasi domain? [y/N]: ${NC}"
-    read -r CONFIRM
-    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        log_warn "Dibatalkan."
-        return
-    fi
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Lanjutkan? [y/N]: ${NC}"; read -r CONFIRM
+    [[ ! "$CONFIRM" =~ ^[Yy]$ ]] && { log_warn "Dibatalkan."; return; }
 
-    log_step "Mengupdate APP_URL di .env..."
-    sed -i "s|^APP_URL=.*|APP_URL=${new_url}|" .env || true
-    log_info "APP_URL diperbarui."
+    sed -i "s|^APP_URL=.*|APP_URL=${new_url}|" .env
 
-    log_step "Mengupdate konfigurasi Nginx..."
-    local nginx_conf=""
     for conf in /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/conf.d/pterodactyl.conf; do
-        if [ -f "$conf" ]; then
-            nginx_conf="$conf"
-            break
-        fi
+        [ -f "$conf" ] && {
+            sed -i "s|server_name .*|server_name ${NEW_DOMAIN};|" "$conf"
+            nginx -t > /dev/null 2>&1 && systemctl reload nginx 2>/dev/null
+            log_info "Nginx diperbarui."; break
+        }
     done
 
-    if [ -n "$nginx_conf" ]; then
-        sed -i "s|server_name .*|server_name ${NEW_DOMAIN};|" "$nginx_conf" || true
-        log_info "Nginx config diperbarui: ${nginx_conf}"
-        if nginx -t > /dev/null 2>&1; then
-            systemctl reload nginx 2>/dev/null || true
-            log_info "Nginx di-reload."
-        else
-            log_error "Nginx config error! Cek manual: nginx -t"
-        fi
-    else
-        log_warn "File konfigurasi Nginx tidak ditemukan, skip."
-    fi
+    php artisan config:clear --quiet 2>/dev/null
+    php artisan cache:clear  --quiet 2>/dev/null
+    php artisan view:clear   --quiet 2>/dev/null
+    chown -R www-data:www-data /var/www/pterodactyl 2>/dev/null
 
-    log_step "Membersihkan cache..."
-    php artisan config:clear --quiet 2>/dev/null && log_info "Config cache dibersihkan." || true
-    php artisan cache:clear --quiet 2>/dev/null && log_info "App cache dibersihkan." || true
-    php artisan view:clear --quiet 2>/dev/null && log_info "View cache dibersihkan." || true
-
-    chown -R www-data:www-data /var/www/pterodactyl 2>/dev/null || true
-
-    echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Pasang SSL (Certbot) untuk ${NEW_DOMAIN}? [y/N]: ${NC}"
-    read -r SETUP_SSL
-    if [[ "$SETUP_SSL" =~ ^[Yy]$ ]]; then
-        if ! command -v certbot &>/dev/null; then
-            log_info "Menginstall Certbot..."
-            detect_os
-            $PKG_INSTALL certbot python3-certbot-nginx > /dev/null 2>&1 || true
-        fi
-        log_info "Menjalankan Certbot..."
-        certbot --nginx -d "$NEW_DOMAIN" && log_info "SSL berhasil dipasang!" || log_warn "Certbot gagal, pasang manual nanti."
-    fi
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Pasang SSL untuk ${NEW_DOMAIN}? [y/N]: ${NC}"; read -r SETUP_SSL
+    [[ "$SETUP_SSL" =~ ^[Yy]$ ]] && {
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Email SSL: ${NC}"; read -r SSL_EMAIL
+        setup_ssl "$NEW_DOMAIN" "$SSL_EMAIL"
+    }
 
     local vps_ip
-    vps_ip=$(curl -s --connect-timeout 5 --max-time 10 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  MIGRASI DOMAIN SELESAI!${NC}\n"
-    echo -e "  ${BOLD}Domain baru:${NC} ${CYAN}${NEW_DOMAIN}${NC}"
-    echo -e "  ${BOLD}APP_URL:${NC}    ${CYAN}${new_url}${NC}"
-    echo -e "\n  ${BOLD}Pastikan A Record DNS mengarah ke:${NC} ${CYAN}${vps_ip}${NC}\n"
-    log_section
+    vps_ip=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+    echo -e "\n  ${GREEN}${BOLD}✅  DOMAIN BERHASIL DIGANTI!${NC}"
+    echo -e "  ${CYAN}${new_url}${NC} → IP: ${CYAN}${vps_ip}${NC}\n"
 }
 
 # ============================================================
 #   OPSI 5: INSTALL PANEL
 # ============================================================
 run_install_panel() {
-    log_section
-    log_step "Install Pterodactyl Panel (Fresh Install)"
-    log_section
-
-    if [ -d "/var/www/pterodactyl" ]; then
-        log_warn "Folder /var/www/pterodactyl sudah ada!"
-        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Panel mungkin sudah terinstall. Lanjutkan? [y/N]: ${NC}"
-        read -r CONFIRM
-        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-            log_warn "Dibatalkan."
-            return
-        fi
-    fi
-
+    [ -d "/var/www/pterodactyl" ] && {
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Panel mungkin sudah ada. Lanjutkan? [y/N]: ${NC}"; read -r C
+        [[ ! "$C" =~ ^[Yy]$ ]] && { log_warn "Dibatalkan."; return; }
+    }
     ensure_pkg "curl" "curl"
-
-    log_info "Menjalankan Pterodactyl Installer..."
-    log_info "Ikuti instruksi di layar untuk menyelesaikan instalasi."
-    echo ""
-
     bash <(curl -s https://pterodactyl-installer.se)
-
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  INSTALL PANEL SELESAI!${NC}"
-    echo -e "  Cek panel kamu di browser.${NC}\n"
-    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  INSTALL SELESAI!${NC}\n"
 }
 
 # ============================================================
 #   OPSI 6: SETUP SWAP
 # ============================================================
 run_swap() {
-    log_section
-    log_step "Setup Swap Memory"
-    log_section
+    log_section; log_step "Setup Swap Memory"; log_section
 
-    local current_swap
+    local current_swap total_ram
     current_swap=$(free -m | awk '/^Swap:/ {print $2}')
-    local total_ram
     total_ram=$(free -m | awk '/^Mem:/ {print $2}')
-
-    log_info "RAM     : ${BOLD}${total_ram}MB${NC}"
-    log_info "Swap    : ${BOLD}${current_swap}MB${NC}"
+    log_info "RAM: ${total_ram}MB | Swap: ${current_swap}MB"
 
     if [ "$current_swap" -gt 0 ]; then
-        log_warn "Swap sudah aktif (${current_swap}MB)."
-        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Hapus swap lama dan buat baru? [y/N]: ${NC}"
-        read -r CONFIRM
-        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-            log_warn "Dibatalkan."
-            return
-        fi
-        log_info "Menonaktifkan swap lama..."
-        swapoff -a 2>/dev/null
-        rm -f /swapfile 2>/dev/null
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Swap aktif. Buat ulang? [y/N]: ${NC}"; read -r C
+        [[ ! "$C" =~ ^[Yy]$ ]] && { log_warn "Dibatalkan."; return; }
+        swapoff -a 2>/dev/null; rm -f /swapfile 2>/dev/null
         sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null
-        log_info "Swap lama dihapus."
     fi
 
-    local recommended
-    if [ "$total_ram" -le 1024 ]; then
-        recommended="2G"
-    elif [ "$total_ram" -le 2048 ]; then
-        recommended="2G"
-    elif [ "$total_ram" -le 4096 ]; then
-        recommended="4G"
-    else
-        recommended="4G"
-    fi
-
-    echo ""
-    echo -e "  ${BOLD}Ukuran swap yang direkomendasikan:${NC}"
-    echo -e "  ${CYAN}  ▸${NC} RAM ${total_ram}MB → Swap ${BOLD}${recommended}${NC}"
-    echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Ukuran swap [${recommended}]: ${NC}"
-    read -r SWAP_SIZE
+    local recommended; [ "$total_ram" -le 2048 ] && recommended="2G" || recommended="4G"
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Ukuran swap [${recommended}]: ${NC}"; read -r SWAP_SIZE
     SWAP_SIZE=${SWAP_SIZE:-$recommended}
+    [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]] && { log_error "Format tidak valid! (2G/4G/512M)"; return; }
 
-    if [[ ! "$SWAP_SIZE" =~ ^[0-9]+[GgMm]$ ]]; then
-        log_error "Format tidak valid! Gunakan format: 2G, 4G, 512M, dll."
-        return
-    fi
+    fallocate -l "$SWAP_SIZE" /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count="${SWAP_SIZE%[GgMm]}" status=progress
+    chmod 600 /swapfile; mkswap /swapfile > /dev/null 2>&1; swapon /swapfile
+    grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
-    local avail_disk
-    avail_disk=$(df -BM / | awk 'NR==2 {print $4}' | tr -d 'M')
-    local swap_mb
-    if [[ "$SWAP_SIZE" =~ [Gg]$ ]]; then
-        swap_mb=$(( ${SWAP_SIZE%[Gg]} * 1024 ))
-    else
-        swap_mb=${SWAP_SIZE%[Mm]}
-    fi
-
-    if [ "$swap_mb" -gt "$avail_disk" ]; then
-        log_error "Disk tidak cukup! Tersedia: ${avail_disk}MB, diminta: ${swap_mb}MB"
-        return
-    fi
-
-    log_step "Membuat swap ${SWAP_SIZE}..."
-    log_info "Mengalokasikan file swap..."
-    fallocate -l "$SWAP_SIZE" /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count="$swap_mb" status=progress 2>/dev/null
-    chmod 600 /swapfile
-    log_info "File swap dibuat."
-
-    log_info "Memformat swap..."
-    mkswap /swapfile > /dev/null 2>&1
-    log_info "Mengaktifkan swap..."
-    swapon /swapfile
-
-    if ! grep -q '/swapfile' /etc/fstab 2>/dev/null; then
-        echo '/swapfile none swap sw 0 0' >> /etc/fstab
-        log_info "Swap ditambahkan ke /etc/fstab (persist setelah reboot)."
-    fi
-
-    local swappiness
-    swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null)
-    if [ "$swappiness" -gt 30 ]; then
+    local swappiness; swappiness=$(cat /proc/sys/vm/swappiness 2>/dev/null)
+    [ "$swappiness" -gt 30 ] && {
         sysctl vm.swappiness=10 > /dev/null 2>&1
-        if ! grep -q 'vm.swappiness' /etc/sysctl.conf 2>/dev/null; then
-            echo 'vm.swappiness=10' >> /etc/sysctl.conf
-        fi
-        log_info "Swappiness diatur ke 10 (default: ${swappiness})."
-    fi
-
-    echo ""
-    log_step "Status Swap:"
-    free -h | head -1
+        grep -q 'vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+        log_info "Swappiness → 10"
+    }
     free -h | grep -i swap
-
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  SWAP ${SWAP_SIZE} BERHASIL DISETUP!${NC}"
-    echo -e "  Swap aktif dan persist setelah reboot.\n"
-    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  SWAP ${SWAP_SIZE} AKTIF!${NC}\n"
 }
 
 # ============================================================
-#   OPSI 7: PASANG THEMA PTERODACTYL
+#   OPSI 7: PASANG THEMA
 # ============================================================
 run_install_theme() {
-    log_section
-    log_step "Pasang Thema Pterodactyl"
-    log_section
-
-    if [ ! -d "/var/www/pterodactyl" ]; then
-        log_error "Folder /var/www/pterodactyl tidak ditemukan!"
-        log_warn "Install panel terlebih dahulu sebelum memasang thema."
-        return
-    fi
-
+    [ ! -d "/var/www/pterodactyl" ] && { log_error "Panel belum terinstall!"; return; }
     ensure_pkg "curl" "curl"
-
-    log_info "Menjalankan installer Thema Pterodactyl..."
-    log_info "Ikuti instruksi di layar untuk menyelesaikan instalasi."
-    echo ""
-
     bash <(curl -s https://raw.githubusercontent.com/SankaVollereii/Thema-Pterodactyl/main/install.sh)
-
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  THEMA BERHASIL DIPASANG!${NC}"
-    echo -e "  Refresh browser untuk melihat perubahan.\n"
-    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  THEMA TERPASANG!${NC}\n"
 }
 
 # ============================================================
-#   OPSI 8: INSTALL CLOUDFLARED TUNNEL
+#   OPSI 8: CLOUDFLARED
 # ============================================================
 run_install_cloudflared() {
-    log_section
-    log_step "Install Cloudflare Tunnel (cloudflared)"
-    log_section
+    log_section; log_step "Cloudflare Tunnel"; log_section
+    ensure_pkg "curl" "curl"
 
-    if command -v cloudflared &>/dev/null; then
-        log_info "cloudflared sudah terinstall ($(cloudflared --version 2>&1 | head -1))."
-        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Install ulang? [y/N]: ${NC}"
-        read -r CONFIRM
-        if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-            log_warn "Dibatalkan."
-        else
-            log_info "Menginstall ulang cloudflared..."
-            if command -v apt-get &>/dev/null; then
-                curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null 2>&1
-                echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" > /etc/apt/sources.list.d/cloudflared.list
-                apt-get update -qq > /dev/null 2>&1
-                apt-get install -y -qq cloudflared > /dev/null 2>&1
-            elif command -v yum &>/dev/null; then
-                yum install -y -q cloudflared > /dev/null 2>&1 || {
-                    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-                    chmod +x /usr/local/bin/cloudflared
-                }
-            fi
-            log_info "cloudflared berhasil diinstall ulang."
-        fi
-    else
-        log_info "Menginstall cloudflared..."
-        ensure_pkg "curl" "curl"
-
+    if ! command -v cloudflared &>/dev/null; then
         if command -v apt-get &>/dev/null; then
             curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg > /dev/null 2>&1
             echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" > /etc/apt/sources.list.d/cloudflared.list
-            apt-get update -qq > /dev/null 2>&1
-            apt-get install -y -qq cloudflared > /dev/null 2>&1
-        elif command -v yum &>/dev/null; then
-            yum install -y -q cloudflared > /dev/null 2>&1 || {
-                curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
-                chmod +x /usr/local/bin/cloudflared
-            }
+            apt-get update -qq > /dev/null 2>&1; apt-get install -y -qq cloudflared > /dev/null 2>&1
         else
             curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
             chmod +x /usr/local/bin/cloudflared
         fi
+        log_info "cloudflared terinstall."
+    else log_info "cloudflared sudah ada."; fi
 
-        if command -v cloudflared &>/dev/null; then
-            log_info "cloudflared terinstall ($(cloudflared --version 2>&1 | head -1))."
-        else
-            log_error "Gagal menginstall cloudflared!"
-            return
-        fi
-    fi
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Token Tunnel: ${NC}"; read -r CF_INPUT
+    [ -z "$CF_INPUT" ] && { log_warn "Token kosong."; return; }
 
-    echo ""
-    log_step "Setup Cloudflare Tunnel..."
-    echo -e "  ${YELLOW}[?]${NC}${BOLD} Masukkan token Cloudflare Tunnel:${NC}"
-    echo -e "  ${CYAN}    Bisa paste token langsung atau perintah lengkap seperti:${NC}"
-    echo -e "  ${CYAN}    sudo cloudflared service install eyJhIjo...${NC}"
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Token: ${NC}"
-    read -r CF_INPUT
-
-    if [ -z "$CF_INPUT" ]; then
-        log_warn "Token kosong, skip setup tunnel."
-        return
-    fi
-
-    local CF_TOKEN
-    CF_TOKEN=$(echo "$CF_INPUT" | grep -oP 'eyJ[A-Za-z0-9_-]+' | head -1)
-
-    if [ -z "$CF_TOKEN" ]; then
-        log_error "Token tidak valid! Pastikan token dimulai dengan 'eyJ...'."
-        return
-    fi
-
-    log_info "Token terdeteksi: ${CF_TOKEN:0:20}..."
+    local CF_TOKEN; CF_TOKEN=$(echo "$CF_INPUT" | grep -oP 'eyJ[A-Za-z0-9_-]+' | head -1)
+    [ -z "$CF_TOKEN" ] && { log_error "Token tidak valid!"; return; }
 
     cloudflared service install "$CF_TOKEN" 2>/dev/null && {
-        systemctl enable cloudflared --quiet 2>/dev/null
-        systemctl start cloudflared 2>/dev/null
-        log_info "Cloudflare Tunnel berhasil disetup & dijalankan."
-    } || {
-        log_warn "cloudflared service mungkin sudah ada, mencoba restart..."
-        systemctl restart cloudflared 2>/dev/null
-    }
+        systemctl enable cloudflared --quiet 2>/dev/null; systemctl start cloudflared 2>/dev/null
+        log_info "Tunnel aktif."
+    } || systemctl restart cloudflared 2>/dev/null
 
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  CLOUDFLARED TUNNEL AKTIF!${NC}"
-    echo -e "  Cek status: ${CYAN}systemctl status cloudflared${NC}\n"
-    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  CLOUDFLARED AKTIF!${NC}\n"
 }
 
 # ============================================================
-#   OPSI 9: FIREWALL SETUP
+#   OPSI 9: FIREWALL
 # ============================================================
 run_firewall() {
-    log_section
-    log_step "Firewall — Buka Port"
-    log_section
+    log_section; log_step "Firewall — Buka Port"; log_section
 
     local FW_CMD=""
-    if command -v ufw &>/dev/null; then
-        FW_CMD="ufw"
-        if ! ufw status | grep -q "active" 2>/dev/null; then
-            log_warn "UFW belum aktif."
-            echo -ne "  ${YELLOW}[?]${NC}${BOLD} Aktifkan UFW sekarang? [y/N]: ${NC}"
-            read -r ENABLE_UFW
-            if [[ "$ENABLE_UFW" =~ ^[Yy]$ ]]; then
-                ufw --force enable > /dev/null 2>&1
-                ufw allow 22/tcp > /dev/null 2>&1
-                log_info "UFW diaktifkan (port 22/tcp otomatis dibuka)."
-            else
-                log_warn "UFW tidak diaktifkan, lanjut..."
-            fi
-        fi
-    elif command -v firewall-cmd &>/dev/null; then
-        FW_CMD="firewall-cmd"
-    else
-        log_error "Tidak ada firewall yang terdeteksi (ufw/firewall-cmd)!"
-        log_info "Install UFW dengan: apt install ufw -y"
-        return
-    fi
+    command -v ufw &>/dev/null && FW_CMD="ufw" || command -v firewall-cmd &>/dev/null && FW_CMD="firewall-cmd"
+    [ -z "$FW_CMD" ] && { log_error "Tidak ada firewall!"; return; }
 
-    log_info "Firewall terdeteksi: ${BOLD}${FW_CMD}${NC}"
+    [ "$FW_CMD" = "ufw" ] && ! ufw status | grep -q "active" && {
+        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Aktifkan UFW? [y/N]: ${NC}"; read -r E
+        [[ "$E" =~ ^[Yy]$ ]] && { ufw --force enable > /dev/null 2>&1; ufw allow 22/tcp > /dev/null 2>&1; log_info "UFW aktif."; }
+    }
 
     while true; do
-        echo ""
-        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Masukkan port yang ingin dibuka (contoh: 9002): ${NC}"
-        read -r FW_PORT
-
-        if [ -z "$FW_PORT" ]; then
-            log_warn "Selesai, kembali ke menu."
-            break
-        fi
-
-        if ! [[ "$FW_PORT" =~ ^[0-9]+$ ]] || [ "$FW_PORT" -lt 1 ] || [ "$FW_PORT" -gt 65535 ]; then
-            log_error "Port tidak valid: $FW_PORT (harus 1-65535)"
-            continue
-        fi
-
-        echo -e "  ${BOLD}Pilih protokol:${NC}"
-        echo -e "  ${GREEN}[1]${NC} TCP saja"
-        echo -e "  ${GREEN}[2]${NC} UDP saja"
-        echo -e "  ${GREEN}[3]${NC} TCP + UDP (keduanya)"
-        echo -ne "  ${BOLD}Pilih [1/2/3]: ${NC}"
-        read -r FW_PROTO
-
+        echo -ne "\n  ${YELLOW}[?]${NC}${BOLD} Port (kosong=selesai): ${NC}"; read -r FW_PORT
+        [ -z "$FW_PORT" ] && break
+        ! [[ "$FW_PORT" =~ ^[0-9]+$ ]] || [ "$FW_PORT" -lt 1 ] || [ "$FW_PORT" -gt 65535 ] && { log_error "Port tidak valid!"; continue; }
+        echo -e "  ${GREEN}[1]${NC} TCP  ${GREEN}[2]${NC} UDP  ${GREEN}[3]${NC} TCP+UDP"
+        echo -ne "  ${BOLD}Pilih: ${NC}"; read -r FW_PROTO
         local protos=()
-        case "$FW_PROTO" in
-            1) protos=("tcp") ;;
-            2) protos=("udp") ;;
-            3) protos=("tcp" "udp") ;;
-            *)
-                log_error "Pilihan tidak valid!"
-                continue
-                ;;
-        esac
-
+        case "$FW_PROTO" in 1) protos=("tcp");; 2) protos=("udp");; 3) protos=("tcp" "udp");; *) log_error "Tidak valid!"; continue;; esac
         for proto in "${protos[@]}"; do
-            if [ "$FW_CMD" = "ufw" ]; then
-                ufw allow "${FW_PORT}/${proto}" > /dev/null 2>&1 \
-                    && log_info "Port ${GREEN}${FW_PORT}/${proto}${NC} berhasil dibuka." \
-                    || log_error "Gagal membuka port ${FW_PORT}/${proto}!"
-            elif [ "$FW_CMD" = "firewall-cmd" ]; then
-                firewall-cmd --permanent --add-port="${FW_PORT}/${proto}" > /dev/null 2>&1 \
-                    && log_info "Port ${GREEN}${FW_PORT}/${proto}${NC} berhasil dibuka." \
-                    || log_error "Gagal membuka port ${FW_PORT}/${proto}!"
-            fi
+            [ "$FW_CMD" = "ufw" ] && ufw allow "${FW_PORT}/${proto}" > /dev/null 2>&1 && log_info "Port ${FW_PORT}/${proto} dibuka."
+            [ "$FW_CMD" = "firewall-cmd" ] && firewall-cmd --permanent --add-port="${FW_PORT}/${proto}" > /dev/null 2>&1 && log_info "Port ${FW_PORT}/${proto} dibuka."
         done
-
-        if [ "$FW_CMD" = "firewall-cmd" ]; then
-            firewall-cmd --reload > /dev/null 2>&1
-        fi
-
-        echo -ne "\n  ${YELLOW}[?]${NC}${BOLD} Buka port lain? [y/N]: ${NC}"
-        read -r AGAIN
-        if [[ ! "$AGAIN" =~ ^[Yy]$ ]]; then
-            break
-        fi
+        [ "$FW_CMD" = "firewall-cmd" ] && firewall-cmd --reload > /dev/null 2>&1
+        echo -ne "  Buka lagi? [y/N]: "; read -r A; [[ ! "$A" =~ ^[Yy]$ ]] && break
     done
-
-    echo ""
-    log_step "Status Firewall:"
-    if [ "$FW_CMD" = "ufw" ]; then
-        ufw status numbered 2>/dev/null
-    elif [ "$FW_CMD" = "firewall-cmd" ]; then
-        firewall-cmd --list-all 2>/dev/null
-    fi
-
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  FIREWALL SETUP SELESAI!${NC}\n"
-    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  FIREWALL SELESAI!${NC}\n"
 }
 
 # ============================================================
-#   OPSI 10: DOCKER CLEANER
+#   OPSI 10: DOCKER CLEAN
 # ============================================================
 run_docker_clean() {
-    log_section
-    log_step "Docker Cleaner — Hapus Resource Tidak Terpakai"
-    log_section
-
-    if ! command -v docker &>/dev/null; then
-        log_error "Docker tidak terinstall di VPS ini!"
-        return
-    fi
-
-    log_info "Docker terdeteksi: $(docker --version 2>&1)"
-
-    log_step "Penggunaan disk Docker saat ini:"
+    log_section; log_step "Docker Cleaner"; log_section
+    ! command -v docker &>/dev/null && { log_error "Docker tidak ada!"; return; }
     docker system df 2>/dev/null
-    echo ""
-
-    local containers images volumes
-    containers=$(docker ps -a -q --filter "status=exited" --filter "status=created" 2>/dev/null | wc -l)
-    images=$(docker images -f "dangling=true" -q 2>/dev/null | wc -l)
-    volumes=$(docker volume ls -f "dangling=true" -q 2>/dev/null | wc -l)
-
-    log_info "Container berhenti : ${BOLD}${containers}${NC}"
-    log_info "Image dangling     : ${BOLD}${images}${NC}"
-    log_info "Volume tidak pakai : ${BOLD}${volumes}${NC}"
-
-    if [ "$containers" -eq 0 ] && [ "$images" -eq 0 ] && [ "$volumes" -eq 0 ]; then
-        local total_reclaimable
-        total_reclaimable=$(docker system df 2>/dev/null | awk 'NR>1 {print $NF}' | grep -cv '0B' || true)
-        if [ "$total_reclaimable" -eq 0 ]; then
-            log_info "Docker sudah bersih, tidak ada yang perlu dihapus."
-            return
-        fi
-    fi
-
-    echo ""
-    echo -e "  ${RED}${BOLD}⚠️  PERINGATAN:${NC} Ini akan menghapus SEMUA:"
-    echo -e "  ${YELLOW}  ▸${NC} Container yang berhenti"
-    echo -e "  ${YELLOW}  ▸${NC} Image yang tidak dipakai"
-    echo -e "  ${YELLOW}  ▸${NC} Network yang tidak dipakai"
-    echo -e "  ${YELLOW}  ▸${NC} Build cache"
-    echo ""
-    echo -ne "  ${RED}[?]${NC}${BOLD} Lanjutkan cleanup? [y/N]: ${NC}"
-    read -r CONFIRM
-
-    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        log_warn "Dibatalkan."
-        return
-    fi
-
-    log_step "Menjalankan docker system prune..."
+    echo -ne "\n  ${RED}[?]${NC}${BOLD} Lanjutkan? [y/N]: ${NC}"; read -r C
+    [[ ! "$C" =~ ^[Yy]$ ]] && { log_warn "Dibatalkan."; return; }
     docker system prune -a -f 2>&1
-
-    echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Hapus juga volume yang tidak terpakai? [y/N]: ${NC}"
-    read -r PRUNE_VOL
-    if [[ "$PRUNE_VOL" =~ ^[Yy]$ ]]; then
-        log_info "Menghapus volume tidak terpakai..."
-        docker volume prune -f 2>&1
-    fi
-
-    echo ""
-    log_step "Penggunaan disk Docker setelah cleanup:"
+    echo -ne "  Hapus volume? [y/N]: "; read -r V; [[ "$V" =~ ^[Yy]$ ]] && docker volume prune -f 2>&1
     docker system df 2>/dev/null
-
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  DOCKER CLEANUP SELESAI!${NC}\n"
-    log_section
-
-    local existing_cron
-    existing_cron=$(crontab -l 2>/dev/null | grep "docker system prune" || true)
-
-    if [ -n "$existing_cron" ]; then
-        log_info "Auto cleanup sudah terjadwal:"
-        echo -e "  ${CYAN}  $existing_cron${NC}"
-        echo ""
-        echo -ne "  ${YELLOW}[?]${NC}${BOLD} Hapus jadwal auto cleanup? [y/N]: ${NC}"
-        read -r DEL_CRON
-        if [[ "$DEL_CRON" =~ ^[Yy]$ ]]; then
-            crontab -l 2>/dev/null | grep -v "docker system prune" | crontab -
-            log_info "Jadwal auto cleanup dihapus."
-        fi
-        return
-    fi
-
-    echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Buat jadwal auto cleanup otomatis? [y/N]: ${NC}"
-    read -r SETUP_CRON
-
-    if [[ ! "$SETUP_CRON" =~ ^[Yy]$ ]]; then
-        return
-    fi
-
-    echo -e "\n  ${BOLD}Jalankan auto cleanup setiap berapa jam?${NC}"
-    echo -e "  ${GREEN}[1]${NC} Setiap 6 jam"
-    echo -e "  ${GREEN}[2]${NC} Setiap 12 jam"
-    echo -e "  ${GREEN}[3]${NC} Setiap 24 jam (1x sehari)"
-    echo -e "  ${GREEN}[4]${NC} Custom (masukkan sendiri)"
-    echo -ne "  ${BOLD}Pilih [1/2/3/4]: ${NC}"
-    read -r CRON_CHOICE
-
-    local cron_hours
-    case "$CRON_CHOICE" in
-        1) cron_hours=6  ;;
-        2) cron_hours=12 ;;
-        3) cron_hours=24 ;;
-        4)
-            echo -ne "  ${YELLOW}[?]${NC}${BOLD} Setiap berapa jam? (1-168): ${NC}"
-            read -r cron_hours
-            if ! [[ "$cron_hours" =~ ^[0-9]+$ ]] || [ "$cron_hours" -lt 1 ] || [ "$cron_hours" -gt 168 ]; then
-                log_error "Input tidak valid! (harus 1-168)"
-                return
-            fi
-            ;;
-        *)
-            log_error "Pilihan tidak valid!"
-            return
-            ;;
-    esac
-
-    echo ""
-    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Ikut hapus volume juga di auto cleanup? [y/N]: ${NC}"
-    read -r AUTO_VOL
-
-    local prune_cmd="docker system prune -a -f > /dev/null 2>&1"
-    if [[ "$AUTO_VOL" =~ ^[Yy]$ ]]; then
-        prune_cmd="docker system prune -a -f --volumes > /dev/null 2>&1"
-    fi
-
-    local cron_schedule
-    if [ "$cron_hours" -lt 24 ]; then
-        cron_schedule="0 */${cron_hours} * * *"
-    else
-        local days=$((cron_hours / 24))
-        if [ "$days" -le 1 ]; then
-            cron_schedule="0 0 * * *"
-        else
-            cron_schedule="0 0 */${days} * *"
-        fi
-    fi
-
-    local cron_entry="${cron_schedule} ${prune_cmd}"
-    (crontab -l 2>/dev/null; echo "$cron_entry") | crontab -
-
-    log_info "Auto cleanup terjadwal: setiap ${BOLD}${cron_hours} jam${NC}"
-    log_info "Cron: ${CYAN}${cron_entry}${NC}"
+    echo -e "\n  ${GREEN}${BOLD}✅  DOCKER CLEAN SELESAI!${NC}\n"
 }
 
 # ============================================================
-#   OPSI 11: WIREGUARD VPN
+#   OPSI 11: WIREGUARD
 # ============================================================
 run_wireguard() {
-    log_section
-    log_step "WireGuard VPN Installer"
-    log_section
-
     ensure_pkg "curl" "curl"
-
-    if command -v wg &>/dev/null; then
-        log_info "WireGuard sudah terinstall."
-        local wg_status
-        wg_status=$(wg show 2>/dev/null | head -5 || true)
-        if [ -n "$wg_status" ]; then
-            log_info "Interface aktif:"
-            echo "$wg_status"
-        fi
-        echo ""
-        log_info "Jalankan ulang installer untuk menambah/hapus client."
-    else
-        log_info "WireGuard belum terinstall, memulai installer..."
-    fi
-
-    echo ""
-    log_info "Menjalankan WireGuard installer..."
-    log_info "Ikuti instruksi di layar."
-    echo ""
-
     bash <(curl -sL https://raw.githubusercontent.com/angristan/wireguard-install/master/wireguard-install.sh)
-
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  WIREGUARD SETUP SELESAI!${NC}"
-    echo -e "  File config client: ${CYAN}/root/*.conf${NC}"
-    echo -e "  Cek status: ${CYAN}wg show${NC}\n"
-    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  WIREGUARD SELESAI!${NC}\n"
 }
 
 # ============================================================
-#   OPSI 12: CEK SPESIFIKASI VPS
+#   OPSI 12: BENCHMARK
 # ============================================================
 run_benchmark() {
-    log_section
-    log_step "Benchmark & Cek Spesifikasi VPS"
-    log_section
-
     ensure_pkg "wget" "wget"
-
-    log_info "Menjalankan bench.sh — ini bisa memakan waktu beberapa menit..."
-    echo ""
-
     wget -qO- bench.sh | bash
+}
 
-    log_section
-    echo -e "\n  ${GREEN}${BOLD}✅  BENCHMARK SELESAI!${NC}\n"
-    log_section
+# ============================================================
+#   OPSI 13: SETUP SSL MANUAL
+# ============================================================
+run_setup_ssl_manual() {
+    log_section; log_step "Setup SSL Manual (Certbot)"; log_section
+
+    detect_os
+    ! command -v certbot &>/dev/null && { $PKG_INSTALL certbot python3-certbot-nginx > /dev/null 2>&1; log_info "Certbot terinstall."; }
+
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Domain: ${NC}"; read -r SSL_DOMAIN
+    [ -z "$SSL_DOMAIN" ] && { log_error "Domain kosong!"; return; }
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Email: ${NC}"; read -r SSL_EMAIL
+    [ -z "$SSL_EMAIL" ] && { log_error "Email kosong!"; return; }
+
+    echo -e "  ${GREEN}[1]${NC} Panel (Nginx)  ${GREEN}[2]${NC} Wings/Node (standalone)"
+    echo -ne "  ${BOLD}Pilih [1/2]: ${NC}"; read -r SSL_TYPE
+
+    [ "$SSL_TYPE" = "2" ] && setup_ssl_wings "$SSL_DOMAIN" "$SSL_EMAIL" || setup_ssl "$SSL_DOMAIN" "$SSL_EMAIL"
 }
 
 # ============================================================
@@ -1518,25 +935,26 @@ main() {
     show_banner
     check_root
 
-    echo -e "  ${BOLD}Pilih mode yang sesuai dengan VPS kamu:${NC}\n"
+    echo -e "  ${BOLD}Pilih mode yang sesuai:${NC}\n"
     echo -e "  ${CYAN}━━━━━━━━━━━━ MIGRASI ━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}[1]${NC} 📤  ${BOLD}BACKUP${NC}    — Jalankan di VPS LAMA (auto kirim ke VPS Baru)"
-    echo -e "  ${GREEN}[2]${NC} 📥  ${BOLD}RESTORE${NC}   — Jalankan di VPS BARU (auto install & setup semua)"
-    echo -e "  ${RED}[3]${NC} 🗑️   ${BOLD}CLEANUP${NC}   — Bersihkan file backup di VPS"
-    echo -e "  ${GREEN}[4]${NC} 🌐  ${BOLD}GANTI DOMAIN${NC} — Migrasi domain panel Pterodactyl"
+    echo -e "  ${GREEN}[1]${NC} 📤  ${BOLD}BACKUP${NC}       — VPS LAMA → stream ke VPS Baru (+ volumes opsional)"
+    echo -e "  ${GREEN}[2]${NC} 📥  ${BOLD}RESTORE${NC}      — VPS BARU → install & setup semua otomatis"
+    echo -e "  ${RED}[3]${NC} 🗑️   ${BOLD}CLEANUP${NC}      — Hapus file backup"
+    echo -e "  ${GREEN}[4]${NC} 🌐  ${BOLD}GANTI DOMAIN${NC} — Migrasi domain panel"
     echo ""
     echo -e "  ${CYAN}━━━━━━━━━━━━ TOOLS ━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}[5]${NC} 🛠️   ${BOLD}INSTALL PANEL${NC}   — Install Pterodactyl Panel (fresh)"
-    echo -e "  ${GREEN}[6]${NC} 💾  ${BOLD}SETUP SWAP${NC}     — Tambah RAM virtual (swap memory)"
-    echo -e "  ${GREEN}[7]${NC} 🎨  ${BOLD}PASANG THEMA${NC}   — Install thema Pterodactyl"
-    echo -e "  ${GREEN}[8]${NC} ☁️   ${BOLD}CLOUDFLARED${NC}    — Install & setup Cloudflare Tunnel"
-    echo -e "  ${GREEN}[9]${NC} 🔥  ${BOLD}FIREWALL${NC}       — Buka port (UFW/firewall-cmd)"
-    echo -e "  ${GREEN}[10]${NC} 🐳 ${BOLD}DOCKER CLEAN${NC}  — Hapus docker yang tidak terpakai"
-    echo -e "  ${GREEN}[11]${NC} 🔐 ${BOLD}WIREGUARD${NC}     — Install & setup WireGuard VPN"
-    echo -e "  ${GREEN}[12]${NC} 📊 ${BOLD}CEK SPEK VPS${NC}  — Benchmark spesifikasi VPS"
+    echo -e "  ${GREEN}[5]${NC}  🛠️  ${BOLD}INSTALL PANEL${NC} — Fresh install Pterodactyl"
+    echo -e "  ${GREEN}[6]${NC}  💾  ${BOLD}SETUP SWAP${NC}    — Tambah swap memory"
+    echo -e "  ${GREEN}[7]${NC}  🎨  ${BOLD}PASANG THEMA${NC}  — Install thema Pterodactyl"
+    echo -e "  ${GREEN}[8]${NC}  ☁️   ${BOLD}CLOUDFLARED${NC}   — Cloudflare Tunnel"
+    echo -e "  ${GREEN}[9]${NC}  🔥  ${BOLD}FIREWALL${NC}      — Buka port UFW"
+    echo -e "  ${GREEN}[10]${NC} 🐳  ${BOLD}DOCKER CLEAN${NC}  — Bersihkan Docker"
+    echo -e "  ${GREEN}[11]${NC} 🔐  ${BOLD}WIREGUARD${NC}     — WireGuard VPN"
+    echo -e "  ${GREEN}[12]${NC} 📊  ${BOLD}CEK SPEK${NC}      — Benchmark VPS"
+    echo -e "  ${GREEN}[13]${NC} 🔒  ${BOLD}SETUP SSL${NC}     — Pasang SSL + auto-renew"
     echo ""
     echo -e "  ${RED}[0]${NC} ❌  Keluar\n"
-    echo -ne "  ${BOLD}Pilih opsi [0-12]: ${NC}"
+    echo -ne "  ${BOLD}Pilih [0-13]: ${NC}"
     read -r OPTION
 
     timer_start
@@ -1554,14 +972,9 @@ main() {
         10) run_docker_clean        ;;
         11) run_wireguard           ;;
         12) run_benchmark           ;;
-        0)
-            echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"
-            exit 0
-            ;;
-        *)
-            log_error "Opsi tidak valid!"
-            exit 1
-            ;;
+        13) run_setup_ssl_manual    ;;
+        0)  echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"; exit 0 ;;
+        *)  log_error "Opsi tidak valid!"; exit 1 ;;
     esac
 
     timer_show
