@@ -3,7 +3,7 @@
 # ============================================================
 #   Auto Script Migrasi Pterodactyl Panel
 #   GitHub  : https://github.com/SankaVollereii/Migrate-Pterodactyl
-#   Version : 2.3.0 — Fully Automated + Volumes + SSL
+#   Version : 2.3.1 — Fully Automated + Volumes + SSL + Panel Updater
 # ============================================================
 
 RED='\033[0;31m'
@@ -24,7 +24,7 @@ show_banner() {
     echo "  ███████║██║  ██║██║ ╚████║██║  ██╗██║  ██║"
     echo "  ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝"
     echo -e "${NC}"
-    echo -e "${BOLD}  Auto Script Migrasi Pterodactyl Panel v2.3.0${NC}"
+    echo -e "${BOLD}  Auto Script Migrasi Pterodactyl Panel v2.3.1${NC}"
     echo -e "  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }
@@ -192,6 +192,51 @@ WINGSEOF
     else
         systemctl restart wings 2>/dev/null && log_info "Wings berjalan." || log_warn "Wings gagal, cek: journalctl -u wings -n 30"
     fi
+}
+
+update_panel() {
+    log_step "Update Panel Pterodactyl ke versi terbaru..."
+    [ ! -d "/var/www/pterodactyl" ] && { log_warn "Panel tidak ditemukan, skip update."; return 0; }
+
+    cd /var/www/pterodactyl || return 1
+
+    local current_ver
+    current_ver=$(grep "'version'" config/app.php 2>/dev/null | grep -oP "[\d.]+" | head -1)
+    log_info "Versi panel saat ini: ${current_ver:-unknown}"
+
+    cp .env /root/.env.backup 2>/dev/null && log_info ".env dibackup ke /root/.env.backup"
+
+    php artisan down --quiet 2>/dev/null || true
+
+    log_info "Download panel terbaru..."
+    curl -sL https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz \
+        | tar -xzv --strip-components=0 > /dev/null 2>&1 \
+        && log_info "Panel terbaru diekstrak." \
+        || { log_error "Gagal download/ekstrak panel!"; php artisan up --quiet 2>/dev/null; return 1; }
+
+    [ ! -f ".env" ] && cp /root/.env.backup .env && log_info ".env direstore."
+
+    chmod -R 755 storage/* bootstrap/cache 2>/dev/null
+
+    export COMPOSER_ALLOW_SUPERUSER=1
+    log_info "Composer install..."
+    composer install --no-dev --optimize-autoloader --quiet 2>/dev/null \
+        && log_info "Composer selesai." \
+        || { log_error "Composer gagal!"; php artisan up --quiet 2>/dev/null; return 1; }
+
+    php artisan view:clear   --quiet 2>/dev/null
+    php artisan config:clear --quiet 2>/dev/null
+    php artisan cache:clear  --quiet 2>/dev/null
+    php artisan migrate --force --quiet 2>/dev/null && log_info "Migrasi DB selesai."
+
+    chown -R www-data:www-data /var/www/pterodactyl 2>/dev/null
+    php artisan queue:restart --quiet 2>/dev/null
+    php artisan up --quiet 2>/dev/null
+
+    local new_ver
+    new_ver=$(grep "'version'" config/app.php 2>/dev/null | grep -oP "[\d.]+" | head -1)
+    log_info "Panel berhasil diupdate: ${current_ver:-?} → ${new_ver:-latest}"
+    log_info "Fix JWT 'missing connect permission' diterapkan."
 }
 
 # ============================================================
@@ -615,6 +660,11 @@ run_restore() {
     php artisan migrate --force --quiet 2>/dev/null && log_info "Migrasi DB selesai."
     php artisan up --quiet 2>/dev/null && log_info "Panel aktif."
 
+    echo ""
+    echo -ne "  ${YELLOW}[?]${NC}${BOLD} Update panel ke versi terbaru? (fix JWT websocket) [Y/n]: ${NC}"
+    read -r DO_UPDATE; DO_UPDATE=${DO_UPDATE:-Y}
+    [[ "$DO_UPDATE" =~ ^[Yy]$ ]] && update_panel
+
     setup_nginx
     setup_cron_and_worker
     install_wings
@@ -929,6 +979,19 @@ run_setup_ssl_manual() {
 }
 
 # ============================================================
+#   OPSI 14: UPDATE PANEL
+# ============================================================
+run_update_panel() {
+    log_section; log_step "Update Panel Pterodactyl"; log_section
+    update_panel
+    systemctl restart pteroq 2>/dev/null && log_info "Queue worker di-restart."
+    systemctl restart wings  2>/dev/null && log_info "Wings di-restart."
+    log_section
+    echo -e "\n  ${GREEN}${BOLD}✅  UPDATE PANEL SELESAI!${NC}\n"
+    echo -e "  ${YELLOW}▸${NC} JWT websocket error sudah diperbaiki.\n"
+}
+
+# ============================================================
 #   MAIN MENU
 # ============================================================
 main() {
@@ -943,18 +1006,19 @@ main() {
     echo -e "  ${GREEN}[4]${NC} 🌐  ${BOLD}GANTI DOMAIN${NC} — Migrasi domain panel"
     echo ""
     echo -e "  ${CYAN}━━━━━━━━━━━━ TOOLS ━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}[5]${NC}  🛠️  ${BOLD}INSTALL PANEL${NC} — Fresh install Pterodactyl"
-    echo -e "  ${GREEN}[6]${NC}  💾  ${BOLD}SETUP SWAP${NC}    — Tambah swap memory"
-    echo -e "  ${GREEN}[7]${NC}  🎨  ${BOLD}PASANG THEMA${NC}  — Install thema Pterodactyl"
-    echo -e "  ${GREEN}[8]${NC}  ☁️   ${BOLD}CLOUDFLARED${NC}   — Cloudflare Tunnel"
-    echo -e "  ${GREEN}[9]${NC}  🔥  ${BOLD}FIREWALL${NC}      — Buka port UFW"
-    echo -e "  ${GREEN}[10]${NC} 🐳  ${BOLD}DOCKER CLEAN${NC}  — Bersihkan Docker"
-    echo -e "  ${GREEN}[11]${NC} 🔐  ${BOLD}WIREGUARD${NC}     — WireGuard VPN"
-    echo -e "  ${GREEN}[12]${NC} 📊  ${BOLD}CEK SPEK${NC}      — Benchmark VPS"
-    echo -e "  ${GREEN}[13]${NC} 🔒  ${BOLD}SETUP SSL${NC}     — Pasang SSL + auto-renew"
+    echo -e "  ${GREEN}[5]${NC}  🛠️  ${BOLD}INSTALL PANEL${NC}  — Fresh install Pterodactyl"
+    echo -e "  ${GREEN}[6]${NC}  💾  ${BOLD}SETUP SWAP${NC}     — Tambah swap memory"
+    echo -e "  ${GREEN}[7]${NC}  🎨  ${BOLD}PASANG THEMA${NC}   — Install thema Pterodactyl"
+    echo -e "  ${GREEN}[8]${NC}  ☁️   ${BOLD}CLOUDFLARED${NC}    — Cloudflare Tunnel"
+    echo -e "  ${GREEN}[9]${NC}  🔥  ${BOLD}FIREWALL${NC}       — Buka port UFW"
+    echo -e "  ${GREEN}[10]${NC} 🐳  ${BOLD}DOCKER CLEAN${NC}   — Bersihkan Docker"
+    echo -e "  ${GREEN}[11]${NC} 🔐  ${BOLD}WIREGUARD${NC}      — WireGuard VPN"
+    echo -e "  ${GREEN}[12]${NC} 📊  ${BOLD}CEK SPEK${NC}       — Benchmark VPS"
+    echo -e "  ${GREEN}[13]${NC} 🔒  ${BOLD}SETUP SSL${NC}      — Pasang SSL + auto-renew"
+    echo -e "  ${GREEN}[14]${NC} 🔄  ${BOLD}UPDATE PANEL${NC}   — Update panel + fix JWT websocket"
     echo ""
     echo -e "  ${RED}[0]${NC} ❌  Keluar\n"
-    echo -ne "  ${BOLD}Pilih [0-13]: ${NC}"
+    echo -ne "  ${BOLD}Pilih [0-14]: ${NC}"
     read -r OPTION
 
     timer_start
@@ -973,6 +1037,7 @@ main() {
         11) run_wireguard           ;;
         12) run_benchmark           ;;
         13) run_setup_ssl_manual    ;;
+        14) run_update_panel        ;;
         0)  echo -e "\n  ${YELLOW}Keluar. Sampai jumpa!${NC}\n"; exit 0 ;;
         *)  log_error "Opsi tidak valid!"; exit 1 ;;
     esac
