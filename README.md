@@ -1,9 +1,9 @@
 # 🦅 Pterodactyl Auto Migration & Tools
 
 > Migrasi panel, install fresh, benchmark VPS, pasang thema.
-> Satu script —  **semua otomatis.**
+> Satu script — **semua otomatis.**
 
-![Version](https://img.shields.io/badge/version-2.1.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.3.1-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![OS](https://img.shields.io/badge/OS-Ubuntu%20%7C%20Debian%20%7C%20CentOS-orange?style=flat-square)
 
@@ -14,16 +14,25 @@
 **Migrasi:**
 - ✅ Backup database & file panel otomatis
 - ✅ Auto kirim backup ke VPS Baru via SCP
+- ✅ Stream volumes Docker langsung ke VPS Baru (hemat storage)
 - ✅ Auto install semua dependencies
 - ✅ Auto setup Nginx, Cronjob & Queue Worker
 - ✅ Restore database + buat ulang user DB
 - ✅ Composer install, clear cache, migrate DB
+- ✅ Auto update panel ke versi terbaru setelah restore
 - ✅ Hapus file backup (opsi 3)
 
 **Tools:**
-- 🛠️ Install Pterodactyl Panel 
+- 🛠️ Install Pterodactyl Panel
+- 🔄 Update Panel ke versi terbaru (fix JWT websocket error)
 - 📊 Benchmark & cek spesifikasi VPS
 - 🎨 Pasang thema Pterodactyl
+- 🔒 Setup SSL otomatis (panel & Wings/Node)
+- ☁️ Cloudflare Tunnel
+- 🔐 WireGuard VPN
+- 🔥 Firewall manager (UFW / firewall-cmd)
+- 🐳 Docker Cleaner
+- 💾 Setup Swap Memory
 
 **Lainnya:**
 - ✅ Support **Ubuntu, Debian & CentOS/RHEL**
@@ -54,6 +63,7 @@ Pilih **[1] BACKUP**, lalu masukkan info VPS Baru.
 4. Baca `.env` lalu backup database
 5. Backup folder `/var/www/pterodactyl`
 6. Kirim otomatis ke VPS Baru via SCP
+7. Opsional: stream volumes Docker langsung ke VPS Baru
 
 ---
 
@@ -71,15 +81,17 @@ Pilih **[2] RESTORE**, lalu masukkan password root MySQL.
 **Apa yang dilakukan script:**
 
 1. Cek file backup ada
-2. Install Nginx, PHP, MariaDB, Redis, Composer
+2. Install Nginx, PHP, MariaDB, Redis, Composer, Docker
 3. Minta password root MySQL (1x saja)
 4. Ekstrak file panel
 5. Restore database & buat user DB
 6. Update permissions & `composer install`
 7. Clear cache & jalankan migrasi
-8. Setup Nginx config
-9. Setup Cronjob & Queue Worker (pteroq)
-10. Restart semua service
+8. **Auto update panel ke versi terbaru** (fix JWT websocket)
+9. Setup Nginx config
+10. Setup Cronjob & Queue Worker (pteroq)
+11. Setup SSL panel & Wings/Node (opsional)
+12. Restart semua service
 
 ---
 
@@ -90,13 +102,6 @@ Cukup **1 langkah** saja: arahkan A Record domain ke IP VPS Baru.
 | Record | Value |
 |--------|-------|
 | **A** | IP VPS Baru (ditampilkan di akhir script) |
-
-**Opsional — Pasang SSL:**
-
-```bash
-apt install certbot python3-certbot-nginx -y
-certbot --nginx -d namadomain.com
-```
 
 **Panel langsung bisa diakses.** 🎉
 
@@ -118,6 +123,8 @@ certbot --nginx -d namadomain.com
 | **[10] Docker Clean** | Hapus docker tidak terpakai | Konfirmasi y/N |
 | **[11] WireGuard** | Install & setup WireGuard VPN | Ikuti wizard |
 | **[12] Cek Spek VPS** | Benchmark CPU, RAM, Disk, Network | Otomatis |
+| **[13] Setup SSL** | Pasang SSL manual + auto-renew | Domain + email |
+| **[14] Update Panel** | Update panel + fix JWT websocket | Otomatis |
 
 > Semua dependency: **auto install.**
 
@@ -156,7 +163,7 @@ sudo bash migrate.sh
 ```
 
 Tambah RAM virtual pakai swap file. Berguna untuk VPS RAM kecil (1-2GB).
-Script otomatis rekomendasi ukuran swap berdasarkan RAM, cek disk space, dan persist setelah reboot.
+Script otomatis rekomendasi ukuran swap berdasarkan RAM dan persist setelah reboot.
 
 ### Pasang Thema
 
@@ -204,7 +211,7 @@ sudo bash migrate.sh
 ```
 
 Hapus semua container berhenti, image tidak terpakai, network, dan build cache.
-Tampilkan disk usage sebelum & sesudah cleanup. Opsi auto cleanup via cron job.
+Tampilkan disk usage sebelum & sesudah cleanup.
 
 ### WireGuard VPN
 
@@ -223,6 +230,41 @@ sudo bash migrate.sh
 ```
 
 Menampilkan info CPU, RAM, Disk, I/O speed, dan network speed.
+
+### Setup SSL Manual
+
+```bash
+sudo bash migrate.sh
+# Pilih [13] SETUP SSL
+```
+
+Pasang SSL via Certbot dengan auto-renew. Pilih mode:
+- **[1] Panel** — menggunakan Nginx plugin
+- **[2] Wings/Node** — menggunakan standalone (stop Wings sementara)
+
+Auto-renew terjadwal setiap hari jam 03:00.
+
+### Update Panel (Fix JWT Websocket)
+
+```bash
+sudo bash migrate.sh
+# Pilih [14] UPDATE PANEL
+```
+
+Update panel Pterodactyl ke versi terbaru secara otomatis. Mengatasi error:
+
+```
+jwt: missing connect permission
+There was an error validating the credentials provided for the websocket.
+```
+
+Error ini terjadi karena **versi panel lama tidak kompatibel dengan Wings v1.11+**. Script otomatis:
+1. Backup `.env` ke `/root/.env.backup`
+2. Download & ekstrak panel versi terbaru
+3. Composer install
+4. Clear cache & migrate DB
+5. Fix permission
+6. Restart Wings & queue worker
 
 ---
 
@@ -260,6 +302,35 @@ systemctl status pteroq
 systemctl restart pteroq
 ```
 
+### ❌ Websocket error / JWT missing connect permission
+
+```bash
+sudo bash migrate.sh
+# Pilih [14] UPDATE PANEL
+```
+
+Atau manual:
+
+```bash
+cd /var/www/pterodactyl
+php artisan down
+curl -L https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz | tar -xzv
+composer install --no-dev --optimize-autoloader
+php artisan migrate --force
+php artisan up
+systemctl restart wings
+```
+
+### ❌ Node Wings merah di panel
+
+1. Pastikan SSL Wings sudah terpasang (opsi `[13] SETUP SSL` → pilih Wings/Node)
+2. Cek port 8080 bisa diakses: `ss -tlnp | grep 8080`
+3. Jalankan ulang Wings configure:
+```bash
+wings configure --panel-url https://domain.com --token TOKEN --node ID
+systemctl restart wings
+```
+
 ### ❌ PHP tidak terdeteksi (CentOS/RHEL)
 
 Script otomatis menambah repo Remi. Jika gagal, install manual:
@@ -280,6 +351,27 @@ yum module enable -y php:remi-8.3
 | Debian 11+ | ✅ Supported |
 | CentOS 8+ / RHEL | ✅ Supported |
 | AlmaLinux / Rocky | ✅ Supported |
+
+---
+
+## 📋 Changelog
+
+### v2.3.1
+- ✅ Tambah fungsi `update_panel()` — update panel ke versi terbaru otomatis
+- ✅ Tambah menu **[14] UPDATE PANEL** — fix JWT websocket error
+- ✅ Restore otomatis tanya update panel setelah selesai
+- ✅ Tambah menu **[13] SETUP SSL** — panel & Wings/Node
+- ✅ Stream volumes Docker langsung ke VPS Baru (tanpa simpan lokal)
+- ✅ Auto-renew SSL via cron
+
+### v2.3.0
+- ✅ Tambah SSL Wings/Node otomatis
+- ✅ Backup volumes Docker opsional
+- ✅ Tambah menu Cloudflared, Firewall, Docker Clean, WireGuard
+- ✅ Upgrade PHP otomatis ke 8.2+
+
+### v2.1.0
+- ✅ Rilis pertama dengan fitur backup & restore dasar
 
 ---
 
